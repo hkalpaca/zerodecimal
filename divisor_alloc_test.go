@@ -2,6 +2,7 @@ package zerodecimal
 
 import (
 	"errors"
+	"math/bits"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ var (
 	divisorAllocThree   = MustNewDivisor(NewFromInt(3))
 	divisorAllocTiny    = MustNewDivisor(newDecimal(u128{lo: 1}, false, MaxPrec))
 	divisorAllocMax     = newDecimal(u128{hi: maxUint64, lo: maxUint64}, false, 0)
-	divisorAllocNarrow  = MustNew(7, 0)
+	divisorAllocNarrow  = MustNew(7, -1) // 0.7: one limb when scaled to DefaultPrec
 	divisorAllocUnitDiv = MustNewDivisor(NewFromInt(1))
 )
 
@@ -118,6 +119,26 @@ func TestDivisorAllocs(t *testing.T) {
 // name claims, so a fixture change cannot silently retarget the gate.
 func TestDivisorAllocShapes(t *testing.T) {
 	t.Parallel()
+	// The one-limb numerator gates reach the hardware-divide arms: the
+	// dividend scaled by its gap still fits one limb, over a one-limb divisor.
+	// The one-limb divisor gates scale past one limb, into the reciprocal.
+	scaledHi := func(d Decimal, v *Divisor, places uint8) uint64 {
+		f := int(places) + int(v.e.prec) - int(d.prec)
+		if d.coef.hi != 0 || v.e.coef.hi != 0 || f < 0 || f > int(MaxPrec) {
+			t.Fatalf("fixture d=%v v=%v places=%d is not a one-limb shape", d, v.Decimal(), places)
+		}
+		hi, _ := bits.Mul64(d.coef.lo, pow10u64[f])
+		return hi
+	}
+	if scaledHi(divisorAllocNarrow, &divisorAllocUnitDiv, DefaultPrec) != 0 {
+		t.Fatal("div_by_one_limb_numerator fixture must scale within one limb")
+	}
+	if scaledHi(divisorProducts[0], &divisorLotQtyDiv, 2) != 0 {
+		t.Fatal("div_round_by_narrow fixture must scale within one limb")
+	}
+	if scaledHi(divisorProducts[0], &divisorLotQtyDiv, DefaultPrec) == 0 {
+		t.Fatal("div_by_one_limb_divisor fixture must scale past one limb")
+	}
 	got, err := divisorAllocMax.DivBy(&divisorAllocThree)
 	if err != nil || got.Prec() >= DefaultPrec {
 		t.Fatalf("degraded_precision fixture: got %v, %v; want a precision below DefaultPrec", got, err)

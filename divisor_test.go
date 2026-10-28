@@ -502,10 +502,17 @@ func TestDiv3by2Recip(t *testing.T) {
 // requireDivisorQuoRem checks v.quoRem(num) against math/big and against the
 // division it replaces, div256by64 for a one-limb coefficient and
 // div256by128 for a two-limb one: the quotient and remainder of num over v's
-// coefficient, and fits exactly when the quotient is below 2^128.
+// coefficient, and fits exactly when the quotient is below 2^128. It also
+// holds v.divRound(num) to divRoundWide(num, c), all four results, which is
+// the drop-in contract divRound documents.
 func requireDivisorQuoRem(t *testing.T, v *Divisor, num u256) {
 	t.Helper()
 	c := v.e.coef
+	gq, grem, ghalf, gfits := v.divRound(num)
+	if wq, wrem, whalf, wfits := divRoundWide(num, c); gq != wq || grem != wrem || ghalf != whalf || gfits != wfits {
+		require.Failf(t, "divRound differs from divRoundWide", "num=%+v c=%+v: got %+v %t %d %t, want %+v %t %d %t",
+			num, c, gq, grem, ghalf, gfits, wq, wrem, whalf, wfits)
+	}
 	q, r, fits := v.quoRem(num)
 	bq, br := new(big.Int).QuoRem(u256ToBig(num), u128ToBig(c), new(big.Int))
 	if bq.Cmp(mod128big) >= 0 {

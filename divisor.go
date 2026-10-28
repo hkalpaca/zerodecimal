@@ -66,11 +66,11 @@ func (v *Divisor) Decimal() Decimal {
 
 // DivBy returns exactly d.Div(v.Decimal()): the same value, precision and error.
 //
-// It runs Div's fast path, the quotient at DefaultPrec, on v's reciprocal
-// wherever Div would divide a numerator wider than one limb. When that
-// quotient does not fit 128 bits, and under the reduced-precision build tags
-// when the divisor rather than the dividend would scale, it returns
-// d.Div(v.Decimal()) itself.
+// It runs Div's fast path, the quotient at DefaultPrec, on v's reciprocal,
+// except that a one-limb scaled dividend over a one-limb divisor takes Div's
+// own single divide. When that quotient does not fit 128 bits, and under the
+// reduced-precision build tags when the divisor rather than the dividend
+// would scale, it returns d.Div(v.Decimal()) itself.
 func (d Decimal) DivBy(v *Divisor) (Decimal, error) {
 	if v == nil || v.e.coef.isZero() {
 		return Decimal{}, ErrDivideByZero
@@ -147,10 +147,12 @@ func (d Decimal) MustDivBy(v *Divisor) Decimal {
 // DivRoundBy returns exactly d.DivRound(v.Decimal(), places, mode), including
 // its validation order (places, then mode, then the divisor).
 //
-// A nonnegative scale gap places + e.Prec() - d.Prec() scales the dividend,
-// which is divided with v's reciprocal. A negative one would scale the
-// divisor instead, so it returns d.DivRound(v.Decimal(), places, mode)
-// itself, as it does for a quotient past 128 bits (ErrOverflow).
+// A nonnegative scale gap places + v.Decimal().Prec() - d.Prec() scales the
+// dividend, which is divided with v's reciprocal, except that a one-limb
+// scaled dividend over a one-limb divisor takes DivRound's own single
+// divide. A negative gap would scale the divisor instead, so it returns
+// d.DivRound(v.Decimal(), places, mode) itself, as it does for a quotient
+// past 128 bits (ErrOverflow).
 func (d Decimal) DivRoundBy(v *Divisor, places uint8, mode RoundingMode) (Decimal, error) {
 	if places > MaxPrec {
 		return Decimal{}, ErrPrecOutOfRange
@@ -221,24 +223,15 @@ func (d Decimal) DivRoundBy(v *Divisor, places uint8, mode RoundingMode) (Decima
 
 // divRoundByWide is DivRoundBy for a two-limb divisor, a scaled dividend
 // past three limbs, or a negative scale gap f, which DivRound itself
-// handles: it scales the divisor instead. quoRem divides d.coef·10^f, and
+// handles: it scales the divisor instead. divRound divides d.coef·10^f, and
 // DivRound reports a quotient past 128 bits (ErrOverflow).
 func (d Decimal) divRoundByWide(v *Divisor, places uint8, mode RoundingMode, f int) (Decimal, error) {
 	if f < 0 {
 		return d.DivRound(v.e, places, mode)
 	}
-	q, r, fits := v.quoRem(mulToU256(d.coef, pow10u128[f&63]))
+	q, rem, halfCmp, fits := v.divRound(mulToU256(d.coef, pow10u128[f&63]))
 	if !fits {
 		return d.DivRound(v.e, places, mode)
-	}
-	// divRoundWide's two facts about the remainder r < c.
-	c := v.e.coef
-	var rem bool
-	var halfCmp int
-	if c.hi == 0 {
-		rem, halfCmp = r.lo != 0, cmpHalf64(r.lo, c.lo)
-	} else {
-		rem, halfCmp = !r.isZero(), cmpDouble128(r, c)
 	}
 	neg := d.neg != v.e.neg
 	if roundsUp(mode, rem, halfCmp, q.lo&1 != 0, neg) {
@@ -250,6 +243,38 @@ func (d Decimal) divRoundByWide(v *Divisor, places uint8, mode RoundingMode, f i
 	return newDecimal(q, neg, places), nil
 }
 
+// divRound is divRoundWide(num, c) for v's coefficient c, on v's reciprocal:
+// the truncated quotient q = ⌊num/c⌋, whether the remainder num mod c is
+// nonzero, halfCmp = sign(2·(num mod c) - c), and whether q fits 128 bits.
+// q, rem and halfCmp are meaningful only when it does; they then round
+// exactly as divRoundWide's results do in roundQuotient: roundsUp decides,
+// and stepping up q = 2^128-1 is ErrOverflow. Any numerator width is
+// accepted (see quoRem), so a caller that scales a dividend or a product up
+// to 256 bits can use it as a drop-in for divRoundWide.
+//
+// PRECONDITION (not checked): v is valid (v.e.coef != 0).
+func (v *Divisor) divRound(num u256) (q u128, rem bool, halfCmp int, fits bool) {
+	var r u128
+	if q, r, fits = v.quoRem(num); !fits {
+		return u128{}, false, 0, false
+	}
+	// divRoundWide's two facts about r < c. A one-limb c compares without
+	// doubling (cmpHalf64). A two-limb one doubles r as cmpDouble128 does,
+	// written out because cmpDouble128 sits just over the inline budget and
+	// its frame measured 4% on the two-limb DivRoundBy row: a carry out of
+	// 2·r already exceeds c.
+	c := v.e.coef
+	if c.hi == 0 {
+		return q, r.lo != 0, cmpHalf64(r.lo, c.lo), true
+	}
+	lo, carry := bits.Add64(r.lo, r.lo, 0)
+	hi, carry := bits.Add64(r.hi, r.hi, carry)
+	if carry != 0 {
+		return q, true, 1, true
+	}
+	return q, !r.isZero(), cmp128(u128{hi: hi, lo: lo}, c), true
+}
+
 // quoRem returns q = ⌊num/c⌋ and r = num mod c for v's coefficient c, and
 // whether q fits 128 bits; q and r are meaningful only when it does. It is
 // the division of divCoefAt and divRoundWide on v's precomputed
@@ -259,9 +284,10 @@ func (d Decimal) divRoundByWide(v *Divisor, places uint8, mode RoundingMode, f i
 //     skipping the high quotient digit when it is zero;
 //   - two-limb c: div256by128 with div3by2Recip in place of div3by2.
 //
-// Any numerator width is accepted. DivBy and DivRoundBy inline the one-limb
-// arm for numerators within three limbs, and divide a one-limb numerator
-// over a one-limb c with a hardware divide, which is faster on arm64.
+// Any numerator width is accepted. divRound derives divRoundWide's rounding
+// facts from q and r. DivBy and DivRoundBy inline the one-limb arm for
+// numerators within three limbs, and divide a one-limb numerator over a
+// one-limb c with a hardware divide, which is faster on arm64.
 //
 // PRECONDITION (not checked): v is valid (v.e.coef != 0).
 func (v *Divisor) quoRem(num u256) (q, r u128, fits bool) {

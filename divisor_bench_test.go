@@ -27,7 +27,7 @@ var (
 	}
 	divisorLotQtyDiv = MustNewDivisor(divisorLotQty)
 
-	// Σ price·qty at 18 places (a two-limb coefficient, 1234567.123…) over
+	// Σ price·qty at 18 places (a two-limb coefficient, 1234681.982…) over
 	// Σ qty at 9 places: a VWAP.
 	divisorNotional    = divisorBenchDecimal(0x1_0574, 0x3e8f_7a1b_2c3d_4e5f, 18)
 	divisorTotalQty    = divisorBenchDecimal(0, 10_000_123_456_789, 9)
@@ -148,6 +148,20 @@ func BenchmarkDivisor(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
 			divisorBenchSink, errDivisorBench = divisorCost.DivRoundBy(&divisorLotQtyDiv, 16, ToNearestAway)
+		}
+	})
+	// A two-limb divisor takes DivRoundBy's outlined arm (quoRem's 3-by-2
+	// reciprocal) rather than the inline one-limb arm.
+	b.Run("shape=div_round_two_limb/impl=Decimal", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			divisorBenchSink, errDivisorBench = divisorWideDividend.DivRound(divisorWideDivisor, 19, ToNearestEven)
+		}
+	})
+	b.Run("shape=div_round_two_limb/impl=Divisor", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			divisorBenchSink, errDivisorBench = divisorWideDividend.DivRoundBy(&divisorWideDivisorDiv, 19, ToNearestEven)
 		}
 	})
 	b.Run("shape=new_divisor/impl=one_limb", func(b *testing.B) {
