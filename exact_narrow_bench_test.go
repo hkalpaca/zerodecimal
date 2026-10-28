@@ -12,7 +12,7 @@ var (
 	directWideA    = RequireFromString("12345678901234567890.123456789")
 	directWideB    = RequireFromString("98765432109.8765432109")
 	directSink     Decimal
-	directErr      error
+	errDirect      error
 )
 
 // BenchmarkDirectRoundShapes times MulRound and DivRound on the operand
@@ -39,7 +39,7 @@ func BenchmarkDirectRoundShapes(b *testing.B) {
 		b.Run("MulRound/"+c.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				directSink, directErr = x.MulRound(y, p, ToNearestEven)
+				directSink, errDirect = x.MulRound(y, p, ToNearestEven)
 			}
 		})
 	}
@@ -69,7 +69,7 @@ func BenchmarkDirectRoundShapes(b *testing.B) {
 		b.Run("DivRound/"+c.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				directSink, directErr = x.DivRound(y, p, ToNearestEven)
+				directSink, errDirect = x.DivRound(y, p, ToNearestEven)
 			}
 		})
 	}
@@ -77,7 +77,7 @@ func BenchmarkDirectRoundShapes(b *testing.B) {
 		one, eight := NewFromInt(1), NewFromInt(8)
 		b.ReportAllocs()
 		for b.Loop() {
-			directSink, directErr = one.DivExact(eight)
+			directSink, errDirect = one.DivExact(eight)
 		}
 	})
 }

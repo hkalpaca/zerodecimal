@@ -160,10 +160,10 @@ func TestDirectRoundNarrowAllocs(t *testing.T) {
 		name string
 		fn   func()
 	}{
-		{"mul_round_one_limb", func() { directSink, directErr = directQty.MulRound(directPrice, 2, ToNearestEven) }},
-		{"mul_round_wide", func() { directSink, directErr = directWideA.MulRound(directWideB, 2, ToNearestEven) }},
-		{"div_round_one_limb", func() { directSink, directErr = directCentsQty.DivRound(directTotalQty, 2, ToNearestEven) }},
-		{"div_round_wide", func() { directSink, directErr = directWideA.DivRound(directWideB, 19, ToNearestEven) }},
+		{"mul_round_one_limb", func() { directSink, errDirect = directQty.MulRound(directPrice, 2, ToNearestEven) }},
+		{"mul_round_wide", func() { directSink, errDirect = directWideA.MulRound(directWideB, 2, ToNearestEven) }},
+		{"div_round_one_limb", func() { directSink, errDirect = directCentsQty.DivRound(directTotalQty, 2, ToNearestEven) }},
+		{"div_round_wide", func() { directSink, errDirect = directWideA.DivRound(directWideB, 19, ToNearestEven) }},
 	}
 	for _, op := range ops {
 		t.Run(op.name, func(t *testing.T) {
