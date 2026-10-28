@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - '**.go'
+      # The nested pgxdecimal module has no fuzz targets and is outside the
+      # root module's ./...; its own job in test.yaml covers it.
+      - '!pgxdecimal/**'
       - 'go.mod'
       - 'go.sum'
       - 'scripts/**'

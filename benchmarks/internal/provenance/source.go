@@ -28,6 +28,10 @@ var SourcePathspecs = []string{
 	"benchmarks/go.sum",
 	"benchmarks/Makefile",
 	".github/workflows/benchmarks.yaml",
+	// "*.go" matches at any depth. The nested pgxdecimal module is a
+	// separate module the benchmarks never import, so its files cannot
+	// affect the results.
+	":(exclude)pgxdecimal",
 }
 
 type trackedFile struct {

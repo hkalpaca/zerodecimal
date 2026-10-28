@@ -74,6 +74,61 @@ func TestFuzzWorkflowRegressionStepRejectsMutations(t *testing.T) {
 	}
 }
 
+// TestFuzzWorkflowIgnoresNestedPgxdecimalModule pins that a change confined to
+// the nested pgxdecimal module, which has no fuzz targets and lies outside the
+// root module's ./..., does not trigger the root fuzz workflow: its
+// pull_request paths exclude pgxdecimal/ after the "**.go" pattern that would
+// otherwise match it, and no later pattern re-includes it.
+func TestFuzzWorkflowIgnoresNestedPgxdecimalModule(t *testing.T) {
+	paths := workflowPullRequestPaths(t, readWorkflow(t, "fuzz.yaml"))
+	goAt, excludeAt := -1, -1
+	for i, p := range paths {
+		switch p {
+		case "**.go":
+			goAt = i
+		case "!pgxdecimal/**":
+			excludeAt = i
+		}
+	}
+	if goAt < 0 || excludeAt < goAt {
+		t.Fatalf("fuzz.yaml paths must list '!pgxdecimal/**' after '**.go': %q", paths)
+	}
+	for _, p := range paths[excludeAt+1:] {
+		if strings.HasPrefix(p, "**") || strings.HasPrefix(p, "pgxdecimal") {
+			t.Fatalf("fuzz.yaml path %q re-includes pgxdecimal/ after its exclusion: %q", p, paths)
+		}
+	}
+}
+
+// workflowPullRequestPaths returns the entries of the workflow's pull_request
+// paths filter, unquoted and without trailing comments.
+func workflowPullRequestPaths(t *testing.T, workflow string) []string {
+	t.Helper()
+	lines := strings.Split(workflow, "\n")
+	start := -1
+	for i, line := range lines {
+		if line == "    paths:" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("workflow has no pull_request paths filter")
+	}
+	var paths []string
+	for _, line := range lines[start+1:] {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		entry, ok := strings.CutPrefix(line, "      - ")
+		if !ok {
+			break
+		}
+		paths = append(paths, strings.Trim(yamlScalarValue(entry), `'"`))
+	}
+	return paths
+}
+
 func TestBenchmarkModuleWorkflowRunsTestsUncached(t *testing.T) {
 	workflow := readWorkflow(t, "test.yaml")
 	step := workflowStep(t, workflow, "Test benchmark fixtures and helpers")

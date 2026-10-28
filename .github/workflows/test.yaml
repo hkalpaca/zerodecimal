@@ -142,6 +142,33 @@ jobs:
       - name: Vet 32-bit build
         run: go vet ./...
 
+  # The pgx codec is a nested module (replaced onto the parent directory), so
+  # the root module's ./... runs never enter it.
+  pgxdecimal-module:
+    name: pgxdecimal module
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pgxdecimal
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26.8'
+      - name: Vet pgxdecimal
+        run: go vet ./...
+      - name: Test pgxdecimal (race)
+        run: go test -race -count=1 ./...
+      - name: Test pgxdecimal allocations (no race)
+        run: go test -run '^Test.*Alloc' -count=1 ./...
+      - name: Lint pgxdecimal
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.11.3
+          working-directory: pgxdecimal
+      - name: Scan pgxdecimal
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -test ./...
+
   benchmark-module:
     name: benchmark module smoke
     runs-on: ubuntu-latest
