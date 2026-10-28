@@ -53,9 +53,16 @@ func divPow10Coef(c u128, dPrec, ePrec uint8, p10 uint64) (u128, bool) {
 	return quoPow10(c, down-up), true
 }
 
-// quoPow10 returns ⌊c/10^k⌋ from the reciprocal tables. Factors above
-// 10^MaxPrec, which only the reduced-precision builds produce, take a full
-// 10^MaxPrec pass first: ⌊⌊c/a⌋/b⌋ = ⌊c/(a·b)⌋.
+// quoPow10 returns ⌊c/10^k⌋ from the reciprocal tables. A factor above
+// 10^MaxPrec takes a full 10^MaxPrec pass first: ⌊⌊c/a⌋/b⌋ = ⌊c/(a·b)⌋.
+//
+// Div does not reach that arm today. From divPow10Coef, k = j + dPrec −
+// DefaultPrec − ePrec exceeds MaxPrec only when j > DefaultPrec (j ≥ 10 under
+// zerodecimal_prec9, j ≥ 13 under zerodecimal_prec12, never in the default
+// build), and isPow10Divisor admits only j = 0 and 2. The arm stays so that
+// divPow10Coef keeps its contract for every 10^j, which
+// TestDivPow10CoefAllExponents checks under those builds: admitting more
+// powers of ten in isPow10Divisor then stays a one-line change.
 //
 // PRECONDITION (not checked): 1 ≤ k ≤ 2·MaxPrec.
 func quoPow10(c u128, k uint8) u128 {

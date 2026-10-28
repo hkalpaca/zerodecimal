@@ -7,8 +7,8 @@ import "testing"
 // FuzzPow10Operand steers the fuzzer onto the fast paths that mutated operand
 // pairs almost never reach: the divisor is ±10^j at precision ePrec (Div's
 // rescale for 1 and 100, the general path for every other j), and the
-// multipliers are ±10^-ePrec, whose coefficient is 1, and a one-limb factor
-// (mulSlow's inline one-limb arms). Div must match pow10RefDiv field for
+// multipliers are ±10^-ePrec and a fuzzed one-limb factor, both served by
+// mulSlow's inline one-limb factor arms. Div must match pow10RefDiv field for
 // field and the shopspring checkDiv oracle; Mul, in both operand orders, must
 // match pow10RefMul and checkMul.
 func FuzzPow10Operand(f *testing.F) {

@@ -48,7 +48,7 @@ type fuzzSeed struct {
 // 2^64 limb boundary with both neighbors, 2^127, 10^19 and 10^38 (the one-
 // and two-limb power-of-ten extremes), a sign-boundary fraction, and a
 // near-max two-limb coefficient at prec 18.
-// 1, 100, -0.01 and 1000 seed Div's power-of-ten and Mul's coefficient-1 paths.
+// 1, 100, -0.01 and 1000 seed Div's power-of-ten and Mul's one-limb-factor paths.
 var fuzzCorpus = []fuzzSeed{
 	{false, 0, 0, 0},
 	{false, 1, 0, 0},

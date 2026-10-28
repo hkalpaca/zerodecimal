@@ -6,18 +6,18 @@ import "testing"
 // for why they may not be local). The success-path operands and the sinks are
 // shared with pow10_operand_bench_test.go.
 var (
-	pow10AllocDiv1     = NewFromInt(1)
-	pow10AllocDiv100   = NewFromInt(100)
-	pow10AllocCent     = RequireFromString("0.01")
-	pow10AllocUnit     = RequireFromString("0.0000000000000000001")
-	pow10AllocMaxInt   = Decimal{coef: u128{hi: maxUint64, lo: maxUint64}}
-	pow10AllocFraction = RequireFromString("0.5")
+	pow10AllocDiv1    = NewFromInt(1)
+	pow10AllocDiv100  = NewFromInt(100)
+	pow10AllocCent    = RequireFromString("0.01")
+	pow10AllocQuantum = RequireFromString("0.0000000000000000001")
+	pow10AllocMaxInt  = Decimal{coef: u128{hi: maxUint64, lo: maxUint64}}
 )
 
-// TestPow10OperandAllocs extends the zero-allocation gate to the power-of-ten
-// fast paths of Div and Mul, which alloc_test.go's shape matrix does not
-// reach: both rescale directions, the fall-through to the general path's
-// degradation and overflow, and both arms of the coefficient-1 product.
+// TestPow10OperandAllocs extends the zero-allocation gate to the arms this
+// feature adds, which alloc_test.go's shape matrix does not reach: Div's
+// power-of-ten rescale in both directions and its fall-through to the general
+// path's degradation and overflow, and mulSlow's one-limb factor arms (no
+// rescale, rescaled, and two two-limb factors that overflow outright).
 func TestPow10OperandAllocs(t *testing.T) {
 	if raceEnabled {
 		t.Skip("allocation counts are unreliable under -race")
@@ -30,9 +30,9 @@ func TestPow10OperandAllocs(t *testing.T) {
 		{name: "div_rescale_down", fn: func() { pow10Sink, errPow10 = pow10TwoLimb19.Div(pow10AllocDiv100) }},
 		{name: "div_degrades", fn: func() { pow10Sink, errPow10 = pow10AllocMaxInt.Div(pow10AllocDiv1) }},
 		{name: "div_overflow", fn: func() { pow10Sink, errPow10 = pow10AllocMaxInt.Div(pow10AllocCent) }},
-		{name: "mul_unit", fn: func() { pow10Sink, errPow10 = pow10TwoLimb19.Mul(pow10AllocDiv1) }},
-		{name: "mul_unit_truncates", fn: func() { pow10Sink, errPow10 = pow10TwoLimb19.Mul(pow10AllocUnit) }},
-		{name: "mul_unit_one_limb_truncates", fn: func() { pow10Sink, errPow10 = pow10AllocUnit.Mul(pow10AllocFraction) }},
+		{name: "mul_one_limb_factor", fn: func() { pow10Sink, errPow10 = pow10TwoLimb19.Mul(pow10AllocDiv1) }},
+		{name: "mul_one_limb_factor_rescaled", fn: func() { pow10Sink, errPow10 = pow10TwoLimb19.Mul(pow10AllocQuantum) }},
+		{name: "mul_two_limb_pair_overflows", fn: func() { pow10Sink, errPow10 = pow10AllocMaxInt.Mul(pow10TwoLimb19) }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

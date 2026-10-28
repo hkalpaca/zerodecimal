@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Div by a divisor whose coefficient is a power of ten and Mul by an operand
-// whose coefficient is 1 take rescale fast paths (pow10_operand.go). Their
-// results must be bit-identical to the general paths, errors and Div's
-// adaptive precision included, under every build tag. The tests below hold
-// both operations to big.Int restatements of their contracts, compared field
-// for field (canonical zero included), and to the shopspring cross-check
-// oracles in crosscheck_test.go.
+// Div by a divisor whose coefficient is 1 or 100 takes a rescale fast path
+// (pow10_operand.go), and mulSlow multiplies a one-limb factor inline
+// (arith.go). Their results must be bit-identical to the general paths,
+// errors and Div's adaptive precision included, under every build tag. The
+// tests below hold both operations to big.Int restatements of their
+// contracts, compared field for field (canonical zero included), and to the
+// shopspring cross-check oracles in crosscheck_test.go.
 
 // pow10RefDiv restates Div's contract with big.Int: the quotient truncated toward
 // zero at the largest p ≤ DefaultPrec whose coefficient fits 128 bits,
@@ -179,34 +179,39 @@ func TestDivPow10DivisorAgainstReference(t *testing.T) {
 }
 
 // TestDivPow10DivisorExamples pins readable cases of each fast-path shape:
-// multiplying rescales (g ≥ 0, one- and two-limb 10^g), truncating rescales
-// (g < 0), quotients that truncate to canonical zero, and the degradation
-// and overflow edges the general path owns. Values depend on DefaultPrec, so
-// each case is checked against pow10RefDiv rather than a fixed string; the
-// readable strings that hold under every build tag are pinned as well.
+// multiplying rescales (g ≥ 0, one- and two-limb 10^g), a negative divisor,
+// the two-limb prec-19 coefficient pow10TwoLimb19 at g = 0 and g < 0 (a
+// truncating rescale), a quotient that truncates to canonical zero, and the
+// fall-through to the degradation and overflow the general path owns. The
+// powers of ten isPow10Divisor does not admit (1000, 10^19) pin the general
+// path for contrast. Values depend on DefaultPrec, so each case is checked
+// against pow10RefDiv; the readable strings that hold under every build tag
+// are pinned as well.
 func TestDivPow10DivisorExamples(t *testing.T) {
 	t.Parallel()
 	maxInt := mustHiLo(t, false, maxUint64, maxUint64, 0)
 	tests := []struct {
-		name string
-		d, e Decimal
-		want string // "" when the value depends on DefaultPrec
+		name    string
+		d, e    Decimal
+		want    string // "" when the value depends on DefaultPrec
+		general bool   // the divisor is a power of ten isPow10Divisor does not admit
 	}{
 		{name: "cents_by_100", d: RequireFromString("123.45"), e: NewFromInt(100), want: "1.2345"},
 		{name: "price_by_1", d: RequireFromString("98.7654"), e: NewFromInt(1), want: "98.7654"},
 		{name: "price_by_cent", d: RequireFromString("1.5"), e: RequireFromString("0.01"), want: "150"},
-		{name: "strike_by_1000", d: NewFromInt(-125000), e: NewFromInt(1000), want: "-125"},
-		{name: "negative_divisor", d: RequireFromString("2.5"), e: NewFromInt(-10), want: "-0.25"},
+		{name: "strike_by_1000_general_path", d: NewFromInt(-125000), e: NewFromInt(1000), want: "-125", general: true},
+		{name: "negative_divisor", d: RequireFromString("2.5"), e: NewFromInt(-100), want: "-0.025"},
 		{name: "one_by_ten_pow_neg19", d: NewFromInt(1), e: RequireFromString("0.0000000000000000001"), want: "10000000000000000000"},
-		{name: "two_limb_prec19_by_100", d: RequireFromString("123.4567890123456789"), e: NewFromInt(100)},
-		{name: "two_limb_prec19_by_1", d: RequireFromString("123.4567890123456789"), e: NewFromInt(1)},
-		{name: "unit_quantum_by_10", d: RequireFromString("0.0000000000000000001"), e: NewFromInt(10)},
+		{name: "two_limb_prec19_by_100", d: pow10TwoLimb19, e: NewFromInt(100)},
+		{name: "two_limb_prec19_by_1", d: pow10TwoLimb19, e: NewFromInt(1)},
+		{name: "quantum_by_100_truncates_to_zero", d: RequireFromString("0.0000000000000000001"), e: NewFromInt(100), want: "0"},
 		{name: "max_by_1_degrades", d: maxInt, e: NewFromInt(1), want: maxInt.String()},
 		{name: "max_by_cent_overflows", d: maxInt, e: RequireFromString("0.01")},
-		{name: "max_prec19_by_ten_pow_19", d: mustHiLo(t, true, maxUint64, maxUint64, 19), e: NewFromUint64(pow10u64[19])},
+		{name: "max_prec19_by_ten_pow_19_general_path", d: mustHiLo(t, true, maxUint64, maxUint64, 19), e: NewFromUint64(pow10u64[19]), general: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, !tc.general, isPow10Divisor(tc.e.coef), "fast-path admission of divisor %v", tc.e)
 			_, _ = pow10CheckDiv(t, tc.d, tc.e)
 			if tc.want != "" {
 				got, err := tc.d.Div(tc.e)
@@ -351,11 +356,12 @@ func TestPow10BenchmarkOperandShapes(t *testing.T) {
 	}
 }
 
-// TestPow10OperandInlineBudgets pins the inlining shape the fast path relies
-// on: isPow10Divisor must inline into Div, so a divisor outside it pays only
-// two compares and never a call. Mul's own body is untouched
-// (TestArithRoundingInlineBudgets pins it); the one-limb factor paths live in
-// the outlined mulSlow.
+// TestPow10OperandInlineBudgets pins the inlining the fast paths rely on.
+// isPow10Divisor must inline into Div, so a divisor outside it pays only two
+// compares and never a call. mul128by64 and mul128by64to192 must inline into
+// divCoefAt, mulSlow and divPow10Coef: those arms exist to avoid
+// mulToU256's call frame, and an outlined helper would bring a frame back.
+// Mul's own body is untouched (TestArithRoundingInlineBudgets pins it).
 func TestPow10OperandInlineBudgets(t *testing.T) {
 	if strconv.IntSize != 64 {
 		t.Skip("inline budgets are calibrated for 64-bit compiler targets")
@@ -363,7 +369,10 @@ func TestPow10OperandInlineBudgets(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not on PATH; cannot query inlining diagnostics")
 	}
-	entry, ok := buildInlineReport(t)["isPow10Divisor"]
-	require.True(t, ok, "isPow10Divisor missing from -m=2 inline report")
-	require.True(t, entry.canInline, "isPow10Divisor must fit the default inline budget, got cost %d", entry.cost)
+	report := buildInlineReport(t)
+	for _, fn := range []string{"isPow10Divisor", "mul128by64", "mul128by64to192"} {
+		entry, ok := report[fn]
+		require.True(t, ok, "%s missing from -m=2 inline report", fn)
+		require.True(t, entry.canInline, "%s must fit the default inline budget, got cost %d", fn, entry.cost)
+	}
 }
