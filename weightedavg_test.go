@@ -515,8 +515,8 @@ func TestWeightedAvgEdgeCases(t *testing.T) {
 // it, before it reaches the exact numerator, while AddTotal keeps an exact
 // product as given. Under zerodecimal_prec9, 0.5 × 0.000000001 needs 10
 // places, so Add's mean of 0.5 rounds to 0, while the wider builds keep it.
-// 0.5 × 10^-DefaultPrec is truncated under every tag, but MulExact holds it
-// only below DefaultPrec 19.
+// 0.5 × 10^-DefaultPrec needs DefaultPrec+1 places, so Add truncates it under
+// every tag; MulExact holds it exactly only below DefaultPrec 19.
 func TestWeightedAvgAddTruncatesProducts(t *testing.T) {
 	t.Parallel()
 	half := RequireFromString("0.5")
@@ -524,30 +524,33 @@ func TestWeightedAvgAddTruncatesProducts(t *testing.T) {
 		RequireFromString("0.000000001"),
 		{coef: u128{lo: 1}, prec: DefaultPrec},
 	} {
+		var byAdd WeightedAvg
+		byAdd.Add(half, weight)
+		total, err := byAdd.Total()
+		require.NoError(t, err)
+		got, err := byAdd.AvgRound(2, ToNearestAway)
+		require.NoError(t, err)
+		truncated := half.Prec()+weight.Prec() > DefaultPrec
+		if truncated {
+			require.Equal(t, Decimal{}, total, "Mul truncates the product to zero: weight=%v", weight)
+			require.Equal(t, Decimal{}, got, "weight=%v", weight)
+		}
+
 		product, err := half.MulExact(weight)
 		if err != nil {
 			require.Equal(t, ErrUnderflow, err, "only 0.5 × 10^-19 has no exact Decimal")
 			require.Equal(t, MaxPrec, DefaultPrec)
 			continue
 		}
-		var byAdd, byTotal WeightedAvg
-		byAdd.Add(half, weight)
+		var byTotal WeightedAvg
 		byTotal.AddTotal(product, weight)
 		exact, err := byTotal.AvgRound(2, ToNearestAway)
 		require.NoError(t, err)
 		require.Equal(t, MustNew(50, -2), exact, "AddTotal keeps the exact product: the mean is 0.5")
-
-		total, err := byAdd.Total()
-		require.NoError(t, err)
-		got, err := byAdd.AvgRound(2, ToNearestAway)
-		require.NoError(t, err)
-		if half.Prec()+weight.Prec() > DefaultPrec {
-			require.Equal(t, Decimal{}, total, "Mul truncates the product to zero: weight=%v", weight)
-			require.Equal(t, Decimal{}, got, "weight=%v", weight)
-			continue
+		if !truncated {
+			require.Equal(t, product, total, "weight=%v", weight)
+			require.Equal(t, exact, got, "weight=%v", weight)
 		}
-		require.Equal(t, product, total, "weight=%v", weight)
-		require.Equal(t, exact, got, "weight=%v", weight)
 	}
 }
 
@@ -1106,7 +1109,7 @@ func TestWeightedAvgMatchesAccumulatorState(t *testing.T) {
 		{value: cents, weight: qty},                        // aligned again
 		{total: true, value: low, weight: low},             // coarser
 		{total: true, value: Decimal{coef: u128{hi: 1, lo: 5}, prec: 3}, weight: Decimal{coef: u128{hi: 1}, prec: 1}}, // two limbs
-		{total: true, weight: qty}, // zero total at precision 3
+		{total: true, weight: qty}, // canonical-zero total while the numerator is at 3: declined, a no-op
 		{value: wavgMax, weight: wavgMax},
 		{value: wavgMax, weight: wavgMax}, // the numerator turns sticky
 		{total: true, value: MustNew(-7, -3), weight: MustNew(-5, -1)},

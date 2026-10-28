@@ -9,6 +9,12 @@ import (
 // ns/row metric divides by it.
 const wavgBenchRows = 1000
 
+// wavgBenchPlaces is the scale pnl_9x16 rounds to: pnl's 16 places, or
+// DefaultPrec-1 under a reduced DefaultPrec. The chain's MustDiv keeps only
+// DefaultPrec places, and MustDiv then Round(p) equals AvgRound(p,
+// ToNearestAway) only for p < DefaultPrec (see AvgRound's legacy relation).
+const wavgBenchPlaces = min(16, DefaultPrec-1)
+
 // Package-level inputs and sinks (see alloc_test.go for why neither may be
 // local). Every fill is a buy of up to 10 000 units at 9 places.
 var (
@@ -49,7 +55,7 @@ func wavgBenchMake(gen func(rng *rand.Rand) Decimal) []Decimal {
 // The three implementations below add value×qty per row, or, with total
 // set, values that already hold the products.
 
-func wavgBenchWeightedAvg(values, qty []Decimal, total, round16 bool) (Decimal, error) {
+func wavgBenchWeightedAvg(values, qty []Decimal, total, rounded bool) (Decimal, error) {
 	var w WeightedAvg
 	if total {
 		for i := range qty {
@@ -60,13 +66,13 @@ func wavgBenchWeightedAvg(values, qty []Decimal, total, round16 bool) (Decimal, 
 			w.Add(values[i], qty[i])
 		}
 	}
-	if round16 {
-		return w.AvgRound(16, ToNearestAway)
+	if rounded {
+		return w.AvgRound(wavgBenchPlaces, ToNearestAway)
 	}
 	return w.Avg()
 }
 
-func wavgBenchChain(values, qty []Decimal, total, round16 bool) Decimal {
+func wavgBenchChain(values, qty []Decimal, total, rounded bool) Decimal {
 	num, weight := Decimal{}, Decimal{}
 	if total {
 		for i := range qty {
@@ -79,13 +85,13 @@ func wavgBenchChain(values, qty []Decimal, total, round16 bool) Decimal {
 			weight = weight.MustAdd(qty[i])
 		}
 	}
-	if round16 {
-		return num.MustDiv(weight).Round(16)
+	if rounded {
+		return num.MustDiv(weight).Round(wavgBenchPlaces)
 	}
 	return num.MustDiv(weight)
 }
 
-func wavgBenchAccumulators(values, qty []Decimal, total, round16 bool) (Decimal, error) {
+func wavgBenchAccumulators(values, qty []Decimal, total, rounded bool) (Decimal, error) {
 	var num, weight Accumulator
 	if total {
 		for i := range qty {
@@ -102,8 +108,8 @@ func wavgBenchAccumulators(values, qty []Decimal, total, round16 bool) (Decimal,
 	if err != nil {
 		return Decimal{}, err
 	}
-	if round16 {
-		return num.DivRound(den, 16, ToNearestAway)
+	if rounded {
+		return num.DivRound(den, wavgBenchPlaces, ToNearestAway)
 	}
 	return num.Div(den)
 }
@@ -117,9 +123,10 @@ func wavgBenchAccumulators(values, qty []Decimal, total, round16 bool) (Decimal,
 //     of time, as the compressor does: AddTotal, the chain's MustAdd, or
 //     Accumulator.Add take them as given.
 //   - shape=pnl_9x16 multiplies the quantities by 16-place prices, products
-//     truncated to DefaultPrec, and finishes with AvgRound(16,
-//     ToNearestAway), which the chain computes as MustDiv then Round(16) and
-//     the Accumulators as DivRound.
+//     truncated to DefaultPrec, and finishes with
+//     AvgRound(wavgBenchPlaces, ToNearestAway): pnl's round16 at the default
+//     DefaultPrec. The chain computes it as MustDiv then Round and the
+//     Accumulators as DivRound.
 //
 // ns/row is ns/op / 1000.
 func BenchmarkWeightedAvg(b *testing.B) {
@@ -129,37 +136,37 @@ func BenchmarkWeightedAvg(b *testing.B) {
 	for _, shape := range []struct {
 		name           string
 		values         []Decimal
-		total, round16 bool
+		total, rounded bool
 	}{
 		{"vwap_9x2", wavgBenchCents, false, false},
 		{"addtotal_9x2", wavgBenchCentsProducts, true, false},
 		{"pnl_9x16", wavgBenchPrices16, false, true},
 	} {
-		values, total, round16 := shape.values, shape.total, shape.round16
-		want := wavgBenchChain(values, wavgBenchQty, total, round16)
-		got, err := wavgBenchWeightedAvg(values, wavgBenchQty, total, round16)
-		raw, rawErr := wavgBenchAccumulators(values, wavgBenchQty, total, round16)
+		values, total, rounded := shape.values, shape.total, shape.rounded
+		want := wavgBenchChain(values, wavgBenchQty, total, rounded)
+		got, err := wavgBenchWeightedAvg(values, wavgBenchQty, total, rounded)
+		raw, rawErr := wavgBenchAccumulators(values, wavgBenchQty, total, rounded)
 		if err != nil || rawErr != nil || got != want || raw != want {
 			b.Fatalf("preflight %s: chain %v, WeightedAvg %v (%v), Accumulators %v (%v)", shape.name, want, got, err, raw, rawErr)
 		}
 		b.Run("shape="+shape.name+"/impl=WeightedAvg", func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				wavgBenchSink, errWavgBench = wavgBenchWeightedAvg(values, wavgBenchQty, total, round16)
+				wavgBenchSink, errWavgBench = wavgBenchWeightedAvg(values, wavgBenchQty, total, rounded)
 			}
 			reportPerRow(b)
 		})
 		b.Run("shape="+shape.name+"/impl=chain", func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				wavgBenchSink = wavgBenchChain(values, wavgBenchQty, total, round16)
+				wavgBenchSink = wavgBenchChain(values, wavgBenchQty, total, rounded)
 			}
 			reportPerRow(b)
 		})
 		b.Run("shape="+shape.name+"/impl=Accumulators", func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				wavgBenchSink, errWavgBench = wavgBenchAccumulators(values, wavgBenchQty, total, round16)
+				wavgBenchSink, errWavgBench = wavgBenchAccumulators(values, wavgBenchQty, total, rounded)
 			}
 			reportPerRow(b)
 		})
