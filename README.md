@@ -163,6 +163,8 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `DivBy` | `ErrDivideByZero`, `ErrOverflow` | `MustDivBy` |
 | `DivRoundBy` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `Div` | `ErrDivideByZero`, `ErrOverflow` | `MustDiv` |
+| `MulInt` | `ErrOverflow` | `MustMulInt` |
+| `DivInt` | `ErrDivideByZero` | `MustDivInt` |
 | `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `QuoRem`, `Mod` | `ErrDivideByZero`, `ErrOverflow` | `MustQuoRem`, `MustMod` |
