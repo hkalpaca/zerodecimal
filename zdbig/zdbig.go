@@ -54,13 +54,20 @@ var pow10 = [20]uint64{
 // sign of the result, and coef itself is neither modified nor retained.
 //
 // FromBigInt does not allocate when |coef| fits 128 bits, on success and on
-// error. A wider coefficient costs about one decimal conversion of itself, and
-// the common hopeless ones are rejected sooner; cap the size of untrusted input
+// error. A wider coefficient costs about one decimal conversion of itself,
+// unless it is too large for exp or not a multiple of ten, which are turned
+// away after at most a pass over its limbs; cap the size of untrusted input
 // before converting it. The two errors are the bare zerodecimal sentinels, as
 // for New.
 //
-// A pgtype.Numeric carries exactly this pair:
+// A nil coef is zero, and so is the Int of a pgtype.Numeric that is SQL NULL,
+// NaN or an infinity: FromBigInt cannot tell those from a zero, and returns
+// Decimal{} with no error. Test the pgtype.Numeric first, and convert only a
+// finite one:
 //
+//	if !n.Valid || n.NaN || n.InfinityModifier != pgtype.Finite {
+//		// NULL, NaN or ±Infinity: there is no Decimal to convert to
+//	}
 //	d, err := zdbig.FromBigInt(n.Int, n.Exp)
 func FromBigInt(coef *big.Int, exp int32) (zerodecimal.Decimal, error) {
 	if coef == nil {
@@ -157,10 +164,10 @@ func fromWide(coef *big.Int, exp int32) (zerodecimal.Decimal, error) {
 	scale := -int64(exp)
 
 	// Two cheap exits before any conversion. If |coef| ≥ 2^128·10^scale even
-	// stripping scale digits leaves a magnitude past 2^128. And an odd
-	// coefficient has no zero to strip (z = 0 < fit), which is the usual
-	// reason a wide coefficient fails.
-	if int64(coef.BitLen())-1 >= 128+pow10Bits(scale) || coef.Bits()[0]&1 != 0 {
+	// stripping scale digits leaves a magnitude past 2^128. And a coefficient
+	// that is not a multiple of ten has no zero to strip (z = 0 < fit), which
+	// is the usual reason a wide coefficient fails: nine random ones in ten.
+	if int64(coef.BitLen())-1 >= 128+pow10Bits(scale) || !multipleOf10(coef.Bits()) {
 		return zerodecimal.Decimal{}, zerodecimal.ErrOverflow
 	}
 
@@ -182,10 +189,23 @@ func fromWide(coef *big.Int, exp int32) (zerodecimal.Decimal, error) {
 		return zerodecimal.Decimal{}, zerodecimal.ErrPrecOutOfRange
 	}
 	strip := max(fit, scale-maxPrec)
-	kept, _ := zerodecimal.NewFromString(digits[:n-strip]) // an integer below 2^128, at most 39 digits
-	_, hi, lo, _ := kept.ToHiLo()
 	//nolint:gosec // 0 ≤ scale-strip ≤ MaxPrec here (strip ≥ scale-MaxPrec, strip ≤ scale), so the uint8 conversion is exact
-	return zerodecimal.NewFromHiLo(neg, hi, lo, uint8(scale-strip))
+	return decimalFromDigits(neg, digits[:n-strip], uint8(scale-strip))
+}
+
+// decimalFromDigits returns the integer written by digits, with sign neg, as a
+// Decimal of precision prec. fromWide hands it at most 39 digits that name a
+// value below 2^128, which none of the parser's limits refuses, so it cannot
+// fail today. The parser's error is propagated, not dropped: if the parser's
+// contract ever changed, the caller gets an error here instead of a silently
+// lost coefficient, which would be a wrong zero.
+func decimalFromDigits(neg bool, digits string, prec uint8) (zerodecimal.Decimal, error) {
+	kept, err := zerodecimal.NewFromString(digits)
+	if err != nil {
+		return zerodecimal.Decimal{}, err
+	}
+	_, hi, lo, _ := kept.ToHiLo()
+	return zerodecimal.NewFromHiLo(neg, hi, lo, prec)
 }
 
 // pow10Bits returns b with 10^scale < 2^b, for 0 ≤ scale ≤ 2^31. It rounds
@@ -193,6 +213,26 @@ func fromWide(coef *big.Int, exp int32) (zerodecimal.Decimal, error) {
 // far from overflowing int64.
 func pow10Bits(scale int64) int64 {
 	return scale*33_219_281/10_000_000 + 1
+}
+
+// multipleOf10 reports whether the number held by the little-endian limbs of a
+// big.Int, of either word width, is a multiple of ten, in one pass and
+// without dividing or allocating. It is even when its low bit is clear. It is
+// a multiple of five when the sum of its limbs is a multiple of five, because
+// 2^32 and 2^64 are both 1 mod 5: each limb counts once, whatever the word
+// width.
+func multipleOf10(limbs []big.Word) bool {
+	if len(limbs) == 0 {
+		return true // zero
+	}
+	if limbs[0]&1 != 0 {
+		return false
+	}
+	var sum uint
+	for _, w := range limbs {
+		sum += uint(w % 5) // at most 4 per limb: no overflow before 2^61 limbs
+	}
+	return sum%5 == 0
 }
 
 // u128FromLimbs reads the magnitude held by little-endian limbs of limbBits

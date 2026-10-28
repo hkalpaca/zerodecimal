@@ -121,10 +121,24 @@ func BenchmarkToBigInt(b *testing.B) {
 // 10^n with an exponent that makes every one of its trailing zeros
 // strippable, so that no cheap exit turns it away. The cost is one decimal
 // conversion of the coefficient, which grows a little faster than linearly.
+// The not_a_multiple_of_ten rows are the inputs the cheap exits do turn away.
 func BenchmarkFromBigIntHostile(b *testing.B) {
 	for _, digits := range []int{1_000, 10_000, 100_000} {
 		coef, exp := pow10Big(digits), int32(-(digits + 19))
 		b.Run(strconv.Itoa(digits)+"_digits", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				benchDecimal, errBench = FromBigInt(coef, exp)
+			}
+		})
+	}
+	// The same sizes as 2^n: even, never a multiple of five, and at an
+	// exponent that leaves the value small, so the size exit does not see
+	// them either. The multiple-of-ten exit turns them away after a pass over
+	// the limbs, with no decimal conversion.
+	for _, digits := range []int{1_000, 10_000, 100_000} {
+		coef, exp := new(big.Int).Lsh(bigOne, uint(digits*332/100)), int32(-(digits - 20))
+		b.Run("not_a_multiple_of_ten_"+strconv.Itoa(digits)+"_digits", func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				benchDecimal, errBench = FromBigInt(coef, exp)

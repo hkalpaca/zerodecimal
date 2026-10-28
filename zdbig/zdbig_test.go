@@ -664,3 +664,68 @@ func TestPow10Bits(t *testing.T) {
 	require.Greater(t, float64(pow10Bits(scale)), float64(scale)*math.Log2(10))
 	require.Less(t, float64(pow10Bits(scale)), float64(scale)*math.Log2(10)+16)
 }
+
+// TestMultipleOf10 holds the limb-sum test for divisibility by ten to big.Int,
+// on the limb widths of 32- and 64-bit platforms (both bases are 1 mod 5), for
+// numbers of every size. Random numbers are a multiple of ten one time in
+// ten, so multiples of ten, of five and of two are made common.
+func TestMultipleOf10(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewPCG(0x6d756c74, 0x3130))
+	five := big.NewInt(5)
+	check := func(limbBits int, n *big.Int) {
+		t.Helper()
+		want := new(big.Int).Mod(n, bigTen).Sign() == 0
+		require.Equalf(t, want, multipleOf10(limbsOf(n, limbBits)), "limbBits=%d n=%s", limbBits, n)
+	}
+	for _, limbBits := range []int{32, 64} {
+		if limbBits > bits.UintSize {
+			continue
+		}
+		for v := range int64(300) { // small values, zero included (no limbs at all)
+			check(limbBits, big.NewInt(v))
+		}
+		for k := range uint(300) { // 2^k is even and never a multiple of five; 10^k and 5^k are the other extremes
+			check(limbBits, new(big.Int).Lsh(bigOne, k))
+			check(limbBits, pow10Big(int(k)))
+			check(limbBits, new(big.Int).Exp(five, big.NewInt(int64(k)), nil))
+			check(limbBits, new(big.Int).Mul(new(big.Int).Lsh(bigOne, k), five))
+		}
+		for i := range 40_000 {
+			n := randMagnitude(rng, 1+rng.IntN(400))
+			switch i % 4 {
+			case 0:
+				n.Mul(n, bigTen)
+			case 1:
+				n.Mul(n, five)
+			case 2:
+				n.Lsh(n, uint(1+rng.IntN(70)))
+			}
+			check(limbBits, n)
+		}
+	}
+	require.True(t, multipleOf10(nil), "an empty limb slice is zero")
+	require.True(t, multipleOf10([]big.Word{0}), "so is a zero limb")
+}
+
+// TestDecimalFromDigits pins the helper behind the last step of the wide
+// path: digits the parser takes become the Decimal, and anything it refuses,
+// or a precision it cannot hold, comes back as an error, never as a silent
+// zero. (FromBigInt never hands it such input today; this is what a change to
+// the parser's contract would hit.)
+func TestDecimalFromDigits(t *testing.T) {
+	t.Parallel()
+	got, err := decimalFromDigits(true, max128.String(), 7)
+	require.NoError(t, err)
+	require.Equal(t, "-"+max128.String(), signedCoef(got).String())
+	require.Equal(t, uint8(7), got.Prec())
+
+	for _, bad := range []string{"", "x", "12e", "1.", ".5", strings.Repeat("1", 201), two128.String()} {
+		refused, refusedErr := decimalFromDigits(false, bad, 3)
+		require.Errorf(t, refusedErr, "digits %q", bad)
+		require.Equalf(t, zerodecimal.Decimal{}, refused, "digits %q", bad)
+	}
+	got, err = decimalFromDigits(false, "1", zerodecimal.MaxPrec+1)
+	require.ErrorIs(t, err, zerodecimal.ErrPrecOutOfRange)
+	require.Equal(t, zerodecimal.Decimal{}, got)
+}

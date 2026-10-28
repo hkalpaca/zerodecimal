@@ -87,10 +87,11 @@ func TestFromBigIntAllocs(t *testing.T) {
 }
 
 // wideRejects are coefficients past 128 bits that FromBigInt turns away
-// before it copies anything: no zero to strip (odd), no room to strip
-// (exp ≥ 0), or a value too large for any amount of stripping. This is an
-// implementation property rather than a documented one: it keeps hostile
-// oversized input cheap.
+// before it converts anything to decimal: no room to strip (exp ≥ 0), a value
+// too large for any amount of stripping, or no zero to strip (not a multiple
+// of ten). The last class is odd, or even but not a multiple of five, and the
+// latter slips past a parity test alone. This is an implementation property
+// rather than a documented one: it keeps hostile oversized input cheap.
 var wideRejects = []allocCase{
 	{"exp_0", two128, 0},
 	{"exp_positive", pow10Big(45), 3},
@@ -99,6 +100,9 @@ var wideRejects = []allocCase{
 	{"odd_min_exp", new(big.Int).Add(pow10Big(45), bigOne), math.MinInt32},
 	{"value_too_large", pow10Big(45), -5},
 	{"huge", new(big.Int).Lsh(bigOne, 100_000), -2},
+	{"even_not_a_multiple_of_ten", new(big.Int).Add(pow10Big(45), big.NewInt(2)), -40},
+	{"power_of_two", new(big.Int).Lsh(bigOne, 200), -22},
+	{"huge_power_of_two", new(big.Int).Lsh(bigOne, 100_000), -30_100},
 }
 
 // TestFromBigIntWideRejectionAllocs pins the cheap exits.

@@ -15,6 +15,13 @@
 // no Decimal form, and ToBigInt is total. A Decimal survives a round trip
 // through ToBigInt and FromBigInt unchanged, trailing zeros included.
 //
+// # Nil coefficients
+//
+// A nil *big.Int is zero, like a zero coefficient. pgtype.Numeric stores SQL
+// NULL, NaN and the infinities with a nil Int, so converting its Int and Exp
+// alone turns those into zero, with no error. FromBigInt cannot see the other
+// fields: test Valid, NaN and InfinityModifier before converting.
+//
 // # Representation
 //
 // A (coef, exp) pair keeps its trailing zeros: FromBigInt follows
@@ -28,9 +35,10 @@
 // when the coefficient fits 128 bits, on success and on error. A wider
 // coefficient is only representable after its trailing decimal zeros are
 // stripped, which takes its decimal digits and so allocates, at a cost of
-// about one decimal conversion of the coefficient; most hopeless ones are
-// rejected before that. ToBigInt allocates the returned big.Int once, limbs
-// included.
+// about one decimal conversion of the coefficient. One that is not a multiple
+// of ten, or is too large for the exponent, is rejected before that, after at
+// most a pass over its limbs. ToBigInt allocates the returned big.Int once,
+// limbs included.
 //
 // # 32-bit platforms
 //

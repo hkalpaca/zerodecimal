@@ -10,14 +10,20 @@ import (
 )
 
 func ExampleFromBigInt() {
-	// A pgtype.Numeric holds exactly this pair: its Int and its Exp. This one
-	// is -1234567 · 10^-4.
+	// A finite pgtype.Numeric holds exactly this pair: its Int and its Exp.
+	// This one is -1234567 · 10^-4.
 	coef, exp := big.NewInt(-1234567), int32(-4)
 	d, err := zdbig.FromBigInt(coef, exp)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(d)
+
+	// A nil coefficient is zero, though, and a pgtype.Numeric that is SQL
+	// NULL, NaN or an infinity has a nil Int: FromBigInt cannot tell it from a
+	// zero and reports no error. Check Valid, NaN and InfinityModifier first.
+	d, err = zdbig.FromBigInt(nil, 0)
+	fmt.Println(d, err)
 
 	// A positive exponent scales the coefficient...
 	d, err = zdbig.FromBigInt(big.NewInt(12), 3)
@@ -43,6 +49,7 @@ func ExampleFromBigInt() {
 	fmt.Println(errors.Is(err, zerodecimal.ErrOverflow))
 	// Output:
 	// -123.4567
+	// 0 <nil>
 	// 12000
 	// 100000 19
 	// true

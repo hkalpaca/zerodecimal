@@ -258,8 +258,10 @@ unchanged; use `NullDecimal` or `StrictNullDecimal` when null is valid.
 For `math/big` interop, such as a `pgtype.Numeric{Int, Exp}` pair or the
 coefficient and exponent of shopspring/decimal or apd, import the
 [zdbig](zdbig/) subpackage: `zdbig.FromBigInt(coef, exp)` and
-`zdbig.ToBigInt(d)` convert exactly, and nothing in this package imports
-`math/big`.
+`zdbig.ToBigInt(d)` convert exactly, and the root package itself imports no
+`math/big`. A nil coefficient is zero, and a `pgtype.Numeric` that is NULL,
+NaN or infinite has a nil `Int`, so check its `Valid`, `NaN` and
+`InfinityModifier` fields before converting.
 
 For SQL `NUMERIC`/`DECIMAL`, `StrictSQLDecimal` is the recommended required
 scanner and `StrictNullDecimal` the nullable scanner. They accept exact text,
