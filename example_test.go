@@ -75,6 +75,34 @@ func ExampleDecimal_Add() {
 	// 0.30000000000000004
 }
 
+func ExampleNewDivisor() {
+	// Prorate a lot's amounts over a partial disposal, amount × disposed /
+	// lot quantity, dividing every product by one precomputed Divisor.
+	lotQty := zerodecimal.NewFromInt(3)
+	disposed := zerodecimal.NewFromInt(2)
+	byLot, err := zerodecimal.NewDivisor(lotQty)
+	if err != nil {
+		panic(err)
+	}
+	for _, amount := range []zerodecimal.Decimal{
+		zerodecimal.RequireFromString("100"),
+		zerodecimal.RequireFromString("4.95"),
+		zerodecimal.RequireFromString("0.05"),
+	} {
+		product := amount.MustMul(disposed)
+		share, err := product.DivRoundBy(&byLot, 2, zerodecimal.ToNearestEven)
+		if err != nil {
+			panic(err)
+		}
+		// DivBy is Div bit for bit, so swapping one for the other is safe.
+		fmt.Println(share, product.MustDivBy(&byLot) == product.MustDiv(lotQty))
+	}
+	// Output:
+	// 66.67 true
+	// 3.3 true
+	// 0.03 true
+}
+
 func ExampleDecimal_MulAddRound() {
 	qty := zerodecimal.RequireFromString("1.5")
 	price := zerodecimal.RequireFromString("19.99")
