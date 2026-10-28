@@ -305,11 +305,11 @@ func (encodeNumericBinary) Encode(value any, buf []byte) ([]byte, error) {
 }
 ```
 
-The nested [`pgxdecimal`](pgxdecimal/) module is such a codec, ready to
-register. It is a separate Go module, so its pgx requirement stays out of this
-module's `go.mod`. `pgxdecimal.Register` maps `Decimal`, `NullDecimal`,
-`StrictSQLDecimal` and `StrictNullDecimal`, values and pointers, to `numeric`
-on a connection's type map:
+The nested [`pgxdecimal`](pgxdecimal/) module is a complete codec built on
+these functions, ready to register. It is a separate Go module, so its pgx
+requirement stays out of this module's `go.mod`. `pgxdecimal.Register` maps
+`Decimal`, `NullDecimal`, `StrictSQLDecimal` and `StrictNullDecimal`, values
+and pointers, to `numeric` on a connection's type map:
 
 ```go
 import "github.com/AlexandrosKyriakakis/zerodecimal/pgxdecimal"
@@ -326,7 +326,10 @@ config.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
 
 Its scans allocate nothing, and its encodes only grow pgx's reused buffer. In
 text format (`QueryExecModeExec` and the simple protocol) it reads with
-`ParseBytes` and writes a value with `Prec()` places, the display scale the
+`ParseBytes` but, unlike the sketch's text plans, writes with `AppendFixed` at
+`Prec()` places rather than `AppendText`. `AppendText` trims trailing zeros, so
+a 1.50 would reach an unconstrained `numeric` column as 1.5 through text but
+as 1.50 through binary; `AppendFixed` sends the digits and display scale the
 binary encoder sends. `NaN` and `±Infinity` fail with `ErrInvalidFloat` in
 both formats. The formats disagree only past `ParseBytes`' 200-byte limit: a
 `numeric(1000,500)` value, 502 bytes as text, fails a text scan with

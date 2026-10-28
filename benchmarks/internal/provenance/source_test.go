@@ -80,6 +80,35 @@ func TestSourceHashIncludesPathAndIndexModeWithFilemodeDisabled(t *testing.T) {
 	}
 }
 
+// TestSourceHashExcludesNestedPgxdecimalModule pins that the nested pgxdecimal
+// module, which the benchmarks never import, is outside the source identity:
+// editing or adding its tracked files, go.mod included, keeps the hash, while
+// root files that merely share its name prefix still count.
+func TestSourceHashExcludesNestedPgxdecimalModule(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "--quiet")
+	writeFile(t, repo, "go.mod", "module example.com/test\n\ngo 1.26\n")
+	writeFile(t, repo, "decimal.go", "package decimal\n")
+	writeFile(t, repo, "pgxdecimal/go.mod", "module example.com/test/pgxdecimal\n\ngo 1.26\n")
+	writeFile(t, repo, "pgxdecimal/codec.go", "package pgxdecimal\n")
+	runGit(t, repo, "add", "go.mod", "decimal.go", "pgxdecimal")
+
+	original := mustSourceHash(t, repo)
+	writeFile(t, repo, "pgxdecimal/codec.go", "package pgxdecimal\n\nconst changed = true\n")
+	writeFile(t, repo, "pgxdecimal/go.mod", "module example.com/test/pgxdecimal\n\ngo 1.27\n")
+	writeFile(t, repo, "pgxdecimal/sub/extra.go", "package sub\n")
+	runGit(t, repo, "add", "pgxdecimal")
+	if got := mustSourceHash(t, repo); got != original {
+		t.Fatalf("pgxdecimal change changed source hash: got %s, want %s", got, original)
+	}
+
+	writeFile(t, repo, "pgxdecimal_helper.go", "package decimal\n")
+	runGit(t, repo, "add", "pgxdecimal_helper.go")
+	if got := mustSourceHash(t, repo); got == original {
+		t.Fatal("a root file named pgxdecimal_helper.go must stay benchmark source")
+	}
+}
+
 func TestSourceHashRejectsEmptyTrackedSet(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init", "--quiet")
