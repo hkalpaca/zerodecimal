@@ -35,10 +35,10 @@ var (
 // TestMulDivRoundByAllocs gates MulDivRoundBy at exactly zero allocations on
 // every arm (narrow, inline, both widths of the outlined arm, and a negative
 // scale gap whose scaled divisor fits 128 bits or does not, dividing by the
-// power of ten last or first), on each overflow (a scaled product
-// past 256 bits, a quotient past 128 bits from the inline bound, and a
-// quotient of 2^128-1 rounded up), on each validation error (places, mode, a
-// nil and a zero Divisor) and on a zero operand.
+// power of ten last or first), on each overflow (a scaled product past 256
+// bits, a quotient past 128 bits from the inline bound or from a two-limb
+// operand, and a quotient of 2^128-1 rounded up), on each validation error
+// (places, mode, a nil and a zero Divisor) and on a zero operand.
 func TestMulDivRoundByAllocs(t *testing.T) {
 	if raceEnabled {
 		t.Skip("allocation counts are unreliable under -race")

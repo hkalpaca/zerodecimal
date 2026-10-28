@@ -137,7 +137,9 @@ divide with `DivBy` or `DivRoundBy`. They return exactly what `Div` and
 build tag), but divide numerators wider than 64 bits by multiplying with a
 precomputed reciprocal instead of running 128-bit divide steps.
 `MulDivRoundBy` does the same for `MulDivRound`'s pro-rata share `d*e/f`, as
-when one quantity splits several amounts. A `Divisor` is
+when one quantity splits several amounts. A share to fewer places than
+`d.Prec()+e.Prec()-f.Prec()` rescales the divisor by a power of ten instead,
+which gains only once the rescaled divisor exceeds 128 bits. A `Divisor` is
 immutable and safe for concurrent use.
 
 `Sum` and the mean operations use a fixed-width wide signed accumulator, so
