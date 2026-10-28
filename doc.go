@@ -1,7 +1,8 @@
 // Package zerodecimal provides checked fixed-point decimal arithmetic with a
 // pointer-free 128-bit coefficient and at most 19 fractional digits.
 // Arithmetic, parsing, comparisons, rounding, Unmarshal methods, and Scanner
-// methods allocate no heap memory on either success or error paths.
+// methods allocate no heap memory on either success or error paths, apart from
+// the one scratch buffer Allocate takes to rank more than 64 weights.
 //
 // # Representation
 //
@@ -43,6 +44,8 @@
 //
 // DivBy and DivRoundBy follow Div's and DivRound's policy exactly: for a
 // divisor precomputed once with NewDivisor they return the same results.
+// MulDivRoundBy does the same for MulDivRound's share d*e/f, with f
+// precomputed.
 //
 // MulExact, DivExact, and AvgExact require an exact Decimal representation and
 // report ErrInexact, ErrUnderflow, or ErrOverflow as appropriate. MulRound,
@@ -56,6 +59,11 @@
 // returns for that mode. Like any later rounding, it cannot recover digits an
 // earlier truncation discarded. Its only error is ErrInvalidRoundingMode, and
 // MustRoundTo is its panicking twin.
+//
+// RoundToMultiple rounds to a multiple of an arbitrary step, such as a tick or
+// lot size, in any RoundingMode and directly from the exact quotient d/|step|;
+// unlike RoundTo it can also fail with ErrDivideByZero for a zero step or
+// ErrOverflow when the multiple does not fit.
 //
 // Allocate and Split divide a total into shares at a caller-selected scale
 // that sum exactly to the total, by the largest-remainder method; rounding
@@ -120,6 +128,8 @@
 // without math/big; decoding never allocates, and encoding allocates only
 // when b lacks capacity. Decoding yields the canonical value, the same as
 // parsing the column's text form when that fits ParseBytes' 200-byte limit.
+// The nested pgxdecimal module, a separate Go module so that pgx stays out of
+// this one's dependencies, is a pgx v5 codec built on these functions.
 //
 // # Allocations and cache
 //
@@ -144,9 +154,10 @@
 //
 // DefaultPrec is 19 by default and can be lowered to 9 or 12 with the mutually
 // exclusive zerodecimal_prec9 and zerodecimal_prec12 tags. These tags affect
-// legacy Mul, Div, and Avg truncation. MaxPrec, strict parsing, exact
-// arithmetic, and directly rounded arithmetic remain at 19 places. The full
-// test suite runs under every supported precision/cache combination.
+// legacy Mul, Div, and Avg truncation, and so MulInt, DivInt, DivBy, and the
+// truncating steps of Accumulator and WeightedAvg. MaxPrec, strict parsing,
+// exact arithmetic, and directly rounded arithmetic remain at 19 places. The
+// full test suite runs under every supported precision/cache combination.
 //
 // # Deprecated compatibility variables
 //

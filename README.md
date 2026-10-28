@@ -7,8 +7,9 @@ latency-critical Go.
 
 - **Zero-allocation numeric core.** Parsing, arithmetic, comparison,
   rounding, conversions, and every Unmarshal/Scan path perform exactly zero
-  heap allocations — success and error paths alike — enforced by
-  `testing.AllocsPerRun` gates in the default test suite
+  heap allocations — success and error paths alike — except that `Allocate`
+  takes one scratch allocation to rank more than 64 weights. The contracts
+  are enforced by `testing.AllocsPerRun` gates in the default test suite
   ([alloc_test.go](alloc_test.go)).
 - **Lower pairwise geomean latency in the committed suite.** The reproducibly
   configured hosted-runner cache-off comparison reports 35.10% lower sec/op
@@ -16,7 +17,7 @@ latency-critical Go.
   shopspring/decimal across each pair's common successful native-API rows
   ([benchmarks/bench-vs-\*.txt](benchmarks/)). These are microbenchmark-suite
   results, not production-throughput guarantees.
-- **Independently oracled.** Deterministic boundary suites and 49 fuzz targets
+- **Independently oracled.** Deterministic boundary suites and 68 fuzz targets
   use shopspring/decimal, `math/big`, and quagmt/udecimal where applicable.
   Arithmetic overflow classification is checked in both directions; codecs
   and SQL boundaries are covered by semantic and round-trip invariants.
@@ -71,7 +72,8 @@ A Decimal is a pointer-free value: 24 bytes on targets with 8-byte maximum
 alignment and 20 bytes on gc's 32-bit max-align-4 ports (`386`, `arm`, `mips`,
 and `mipsle`). Copy it freely, compare it cheaply, pack it densely. The domain
 is |value| < 2^128 / 10^prec — up to 39 significant digits with up to 19
-fractional. There is **no `big.Int` anywhere in the package**: every operation
+fractional. There is **no `big.Int` anywhere in the package** (only the
+optional [zdbig](zdbig/) subpackage converts to and from one): every operation
 runs on fixed-width 128/256-bit integer math, so nothing can escape to the heap
 and magnitude overflow returns `ErrOverflow` instead of degrading into
 arbitrary-precision slowness. Legacy `Mul`, `Div`, and `Avg` may truncate
@@ -121,7 +123,7 @@ explicit, use:
 | Intent | Multiplication/division | Mean |
 | --- | --- | --- |
 | Require an exact `Decimal` representation | `MulExact`, `DivExact` | `AvgExact` |
-| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`) | `AvgRound` (unweighted, as are `Avg` and `AvgExact`); `WeightedAvg.AvgRound` (Σ value·weight / Σ weight over two exact streamed sums, rounded once; `WeightedAvg.Add` truncates each product like `Mul`, and `WeightedAvg.Avg` the quotient like `Div`) |
+| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`), `MulDivRound` (`d*e/f`) | `AvgRound` (unweighted, as are `Avg` and `AvgExact`); `WeightedAvg.AvgRound` (weighted, streamed) |
 
 Exact operations return `ErrInexact` when nonzero digits would be discarded,
 `ErrUnderflow` for a nonzero result below `10^-MaxPrec`, and `ErrOverflow` for
@@ -153,6 +155,10 @@ when one quantity splits several amounts. A share to fewer places than
 which gains only once the rescaled divisor exceeds 128 bits. A `Divisor` is
 immutable and safe for concurrent use.
 
+`MulInt` and `DivInt` multiply and divide by an `int64` without building a
+`Decimal` operand, and return bit for bit what `Mul` and `Div` return for
+`NewFromInt(n)`, errors included.
+
 `Sum` and the mean operations use a fixed-width wide signed accumulator, so
 cancellation is independent of operand order. `QuoRem` and `Mod` implement
 truncated division and correctly return quotient zero when a precision-aligned
@@ -162,19 +168,32 @@ divisor is wider than the 128-bit numerator.
 totals over rows or struct fields. Its zero value is ready to use, and `Add`,
 `Sub`, and `AddMul` (`d*e` truncated like `Mul`, but kept wide) never fail.
 Each sign keeps its own 256-bit total, so the result does not depend on the
-order of the terms and no partial sum overflows before a finisher reads it:
-`Sum` returns the exact total, `Div` divides it with `Div`'s truncation, and
-`DivRound` rounds Σ/den once, the n-ary form of `(a+b)/c` rounded once. Use it
-in place of udecimal running sums, whose `Add` never fails because it falls
-back to `big.Int`.
+order of the terms and a running total need not fit 128 bits until a finisher
+reads it; only a same-sign total past 256 bits is lost, which every finisher
+reports as `ErrOverflow`. `Sum` returns the exact total, `Div` divides it with
+`Div`'s truncation, and `DivRound` rounds Σ/den once, the n-ary form of
+`(a+b)/c` rounded once. Use it in place of udecimal running sums, whose `Add`
+never fails because it falls back to `big.Int`.
+
+`WeightedAvg` streams a weighted mean Σ value·weight / Σ weight, such as a
+volume-weighted average price, over two exact `Accumulator` sums, so rows can
+arrive in any order and the sums need not fit 128 bits until read. `Add` adds
+a row's product truncated at `DefaultPrec` places, as `Mul` truncates it;
+`AddTotal` takes a numerator term you computed, such as `MulExact`'s, as
+given. `Avg` divides the sums with `Div`'s truncation, `AvgRound` rounds their
+exact quotient once, and `Total` and `Weight` return them. A zero total
+weight, as in an empty stream, is `ErrDivideByZero`.
 
 ## Error model
 
 All sentinels live in [errors.go](errors.go), are returned bare on hot paths,
 and match with `errors.Is`. `database/sql` may wrap scanner errors, and
 `Scan`'s precomputed `bool` and `time.Time` unsupported-type errors wrap
-`ErrScanType`. Constructors and legacy arithmetic operations have panicking
-twins for call sites with proven bounds; rows marked `—` below have none.
+`ErrScanType`. Constructors, the legacy arithmetic operations (`MulInt`,
+`DivInt`, and `DivBy` among them), `MulRound`, `DivRound`, `MulAddRound`,
+`MulDivRound`, `AvgRound`, `Rescale`, and `RoundTo` have panicking twins for
+call sites with proven bounds; a twin panics with the bare sentinel its
+erroring form returns. Rows marked `—` below have none.
 
 | Operation | Possible sentinels | Panicking twin |
 | --- | --- | --- |
@@ -187,16 +206,13 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `Add`, `Sub`, `Mul` | `ErrOverflow` | `MustAdd`, `MustSub`, `MustMul` |
 | `NewDivisor` | `ErrDivideByZero` | `MustNewDivisor` |
 | `DivBy` | `ErrDivideByZero`, `ErrOverflow` | `MustDivBy` |
-| `DivRoundBy` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
-| `MulDivRoundBy` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
+| `DivRoundBy`, `MulDivRoundBy` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `Div` | `ErrDivideByZero`, `ErrOverflow` | `MustDiv` |
 | `MulInt` | `ErrOverflow` | `MustMulInt` |
 | `DivInt` | `ErrDivideByZero` | `MustDivInt` |
-| `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; division also `ErrDivideByZero` | — |
-| `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | `MustMulRound`, `MustDivRound`, `MustMulAddRound`, `MustAvgRound` |
+| `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; `DivExact` also `ErrDivideByZero` | — |
+| `MulRound`, `DivRound`, `MulAddRound`, `MulDivRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; `DivRound` and `MulDivRound` also `ErrDivideByZero` | `MustMulRound`, `MustDivRound`, `MustMulAddRound`, `MustMulDivRound`, `MustAvgRound` |
 | `QuoRem`, `Mod` | `ErrDivideByZero`, `ErrOverflow` | `MustQuoRem`, `MustMod` |
-| `RoundToMultiple` | `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
-| `MulDivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | `MustMulDivRound` |
 | `Sum`, `Avg` | `ErrOverflow` | `MustSum`, `MustAvg` |
 | `Accumulator.Sum`, `Accumulator.Div` | `ErrOverflow`, also once a same-sign total passed 256 bits; `Div` also `ErrDivideByZero` | — |
 | `Accumulator.DivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
@@ -204,6 +220,7 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `WeightedAvg.AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `Rescale` | `ErrPrecOutOfRange`, `ErrOverflow` | `MustRescale` |
 | `RoundTo` | `ErrInvalidRoundingMode` | `MustRoundTo` |
+| `RoundToMultiple` | `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `IntPart` | `ErrIntPartOverflow` | — |
 | `Allocate` | `ErrPrecOutOfRange`, `ErrNegativeWeight`, `ErrDivideByZero`, `ErrInexact`, `ErrOverflow` | — |
 | `Split` | `ErrPrecOutOfRange`, `ErrDivideByZero`, `ErrInexact`, `ErrOverflow` | — |
@@ -217,24 +234,25 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 Everything else is infallible: `NewFromInt`/`NewFromInt32`/`NewFromUint64`,
 `Neg`, `Abs`, `CopySign`, `Sign`, the `Is*` predicates, `Cmp` and the
 comparison family, `Min`/`Max`, the original rounding family, `Trim`, `Prec`,
-`FracDigits`, `IsRounded`, `ToHiLo`, `String`, `StringFixed`, `AppendFixed`, and
-`InexactFloat64`.
+`FracDigits`, `IsRounded`, `ToHiLo`, `String`, `StringFixed`, `AppendFixed`,
+`AppendPgNumeric`, `InexactFloat64`, `zdbig.ToBigInt`, and the `Accumulator`
+and `WeightedAvg` methods that add terms or reset (`Add`, `Sub`, `AddMul`,
+`AddTotal`, `Reset`); their finishers, listed above, report an overflowing
+running total.
 `AppendText`, `AppendBinary`, the `Marshal*` methods, and `Value` return an
 error only to satisfy their interfaces — it is currently always nil.
 
 ## Allocation guarantees
 
-[alloc_test.go](alloc_test.go) enforces exact `testing.AllocsPerRun` contracts
-on success and error paths:
+[alloc_test.go](alloc_test.go) and the `*_alloc_test.go` files beside each
+feature enforce exact `testing.AllocsPerRun` contracts on success and error
+paths:
 
 | Allocations | Operations |
 | --- | --- |
-| **exactly 0** | Parsing; legacy, exact, direct-round, and aggregate arithmetic; comparison and rounding; `Trim`, `IsRounded`, `FracDigits`; decode and Scan paths; `Append*` with sufficient caller capacity |
-| **exactly 1** | `StringFixed` for every `uint8` places value; `MarshalText`, `MarshalJSON`, and `MarshalBinary` for their returned slice |
+| **exactly 0** | Parsing; legacy, exact, direct-round, and aggregate arithmetic; comparison and rounding; `Trim`, `IsRounded`, `FracDigits`; decode and Scan paths; `Append*` with sufficient caller capacity; every `Accumulator` method (`Add`, `Sub`, `AddMul`, `Reset`, and the finishers `Sum`, `Div`, `DivRound`) and `WeightedAvg` method (`Add`, `AddTotal`, `Reset`, and the finishers `Total`, `Weight`, `Avg`, `AvgRound`); `ParsePgNumeric`, and `AppendPgNumeric` with `PgNumericMaxLen` spare capacity in `b` |
 | **exactly 0 with enough `dst` capacity; 1 scratch buffer when more than 64 weights are ranked** | `Allocate`, which ranks only a nonzero total that passed its other checks (ranking can still end in `ErrOverflow`); `Split`, which never ranks |
-| **exactly 0** | Every `Accumulator` method: `Add`, `Sub`, `AddMul`, `Reset`, and the finishers `Sum`, `Div`, and `DivRound`, on success and error |
-| **exactly 0** | Every `WeightedAvg` method: `Add`, `AddTotal`, `Reset`, and the finishers `Total`, `Weight`, `Avg`, and `AvgRound`, on success and error |
-| **exactly 0 in the PostgreSQL binary codec** | `ParsePgNumeric` on every success and error path; `AppendPgNumeric` with `PgNumericMaxLen` spare capacity in `b` |
+| **exactly 1** | `StringFixed` for every `uint8` places value; `MarshalText`, `MarshalJSON`, and `MarshalBinary` for their returned slice |
 | **normally 1** | Uncached multi-byte `String` results; Go may serve a one-byte string from its static table |
 | **exactly 2 in the gated uncached multi-byte case** | `Value`: canonical string plus boxing into `driver.Value` |
 | **exactly 0 when the opt-in cache is enabled and hits** | `String` and valid SQL `Value` paths for cache-window values |
@@ -293,6 +311,11 @@ and rounding a negative value to zero yields the canonical unsigned zero.
 | `RoundCeil(0)` | toward +∞ | `3` | `4` | `-2` |
 | `RoundFloor(0)` | toward −∞ | `2` | `3` | `-3` |
 
+`Floor()` and `Ceil()` are `RoundFloor(0)` and `RoundCeil(0)`. Every mode is
+pinned tie-by-tie against its shopspring equivalent in
+[crosscheck_test.go](crosscheck_test.go) and fuzzed in
+[fuzz_test.go](fuzz_test.go).
+
 `RoundTo(places, mode)` is the same rounding with the mode as a run-time
 `RoundingMode`, the type `MulRound` and `DivRound` take, for a scale and mode
 that arrive as configuration. Each mode returns exactly what its method above
@@ -302,21 +325,16 @@ returns: `ToNearestAway` is `Round`, `ToNearestEven` is `RoundBank`,
 error is `ErrInvalidRoundingMode`, checked before the `places ≥ d.Prec()`
 shortcut, so a bad mode fails there too; `MustRoundTo` panics instead.
 
-`IsRounded(places)` reports whether `d` has no digit past `places`, so that no
-mode changes it: `d.Equal(d.Truncate(places))`, and equally
+`IsRounded(places)` reports whether `d` has no nonzero digit past `places`, so
+that no mode changes it: `d.Equal(d.Truncate(places))`, and equally
 `d.Equal(d.RoundBank(places))`, without building the rounded value.
-
-`Floor()` and `Ceil()` are `RoundFloor(0)` and `RoundCeil(0)`. Every mode is
-pinned tie-by-tie against its shopspring equivalent in
-[crosscheck_test.go](crosscheck_test.go) and fuzzed in
-[fuzz_test.go](fuzz_test.go).
 
 `RoundToMultiple(step, mode)` rounds to a multiple of an arbitrary step
 instead of a power of ten — a tick or lot size, or a corporate-action rule
 such as 0.001 shares — in any `RoundingMode`, directly from the exact quotient
 `d/|step|`. The result keeps `d`'s sign and carries `step`'s precision; unlike
-the family above it is fallible, returning `ErrInvalidRoundingMode` for a mode
-that is not one of the six, `ErrDivideByZero` for a zero step, and
+the original family it is fallible, returning `ErrInvalidRoundingMode` for a
+mode that is not one of the six, `ErrDivideByZero` for a zero step, and
 `ErrOverflow` when the multiple does not fit at that precision.
 
 ## JSON and SQL boundaries
@@ -332,9 +350,10 @@ For `math/big` interop, such as a `pgtype.Numeric{Int, Exp}` pair or the
 coefficient and exponent of shopspring/decimal or apd, import the
 [zdbig](zdbig/) subpackage: `zdbig.FromBigInt(coef, exp)` and
 `zdbig.ToBigInt(d)` convert exactly, and the root package itself imports no
-`math/big`. A nil coefficient is zero, and a `pgtype.Numeric` that is NULL,
-NaN or infinite has a nil `Int`, so check its `Valid`, `NaN` and
-`InfinityModifier` fields before converting.
+`math/big`. `FromBigInt` allocates nothing for a coefficient within 128 bits,
+and `ToBigInt` allocates its result once. A nil coefficient is zero, and a
+`pgtype.Numeric` that is NULL, NaN or infinite has a nil `Int`, so check its
+`Valid`, `NaN` and `InfinityModifier` fields before converting.
 
 For SQL `NUMERIC`/`DECIMAL`, `StrictSQLDecimal` is the recommended required
 scanner and `StrictNullDecimal` the nullable scanner. They accept exact text,
@@ -362,8 +381,7 @@ accepts zero digits at either end, as PostgreSQL does. Binary `NaN` and
 `±Infinity` return `ErrInvalidFloat`; their text forms fail `ParseBytes` with
 `ErrInvalidFormat`. `AppendPgNumeric` cannot fail and writes at most
 `PgNumericMaxLen` (30) bytes. The root module takes no pgx dependency. A pgx v5
-codec wires in the binary format as below; its text plans call `ParseBytes` and
-`AppendText`:
+codec wires in the binary format as below:
 
 ```go
 // Binary scan plan. SQL NULL arrives as src == nil.
@@ -406,14 +424,17 @@ config.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
 
 Its scans allocate nothing, and its encodes only grow pgx's reused buffer. In
 text format (`QueryExecModeExec` and the simple protocol) it reads with
-`ParseBytes` but, unlike the sketch's text plans, writes with `AppendFixed` at
-`Prec()` places rather than `AppendText`. `AppendText` trims trailing zeros, so
-a 1.50 would reach an unconstrained `numeric` column as 1.5 through text but
-as 1.50 through binary; `AppendFixed` sends the digits and display scale the
-binary encoder sends. `NaN` and `±Infinity` fail with `ErrInvalidFloat` in
-both formats. The formats disagree only past `ParseBytes`' 200-byte limit: a
-`numeric(1000,500)` value, 502 bytes as text, fails a text scan with
-`ErrMaxStrLen` but decodes in binary.
+`ParseBytes` and writes with `AppendFixed` at `Prec()` places, not
+`AppendText`: `AppendText` trims trailing zeros, so a 1.50 would reach an
+unconstrained `numeric` column as 1.5 through text but as 1.50 through binary,
+while `AppendFixed` sends the digits and display scale the binary encoder
+sends. A codec of your own should write text the same way. `NaN` and
+`±Infinity` fail with `ErrInvalidFloat` in both formats: `ParsePgNumeric`
+returns it for the binary encodings, and the codec maps the text forms, which
+`ParseBytes` rejects with `ErrInvalidFormat`, to it. As above, text and binary
+scans then differ only past `ParseBytes`' 200-byte limit: a `numeric(1000,500)`
+value, 502 bytes as text, fails a text scan with `ErrMaxStrLen` but decodes in
+binary.
 
 ## Benchmarks
 
@@ -563,9 +584,10 @@ primitives (arm64 needs no flag).
 | `zerodecimal_nostrcache` | Forces the cache off |
 
 The precision tags are mutually exclusive. They change the truncation cap for
-legacy `Mul`, `Div`, and `Avg`; strict parsing, `MaxPrec`, exact APIs, and
-direct-round APIs remain at 19 places. `zerodecimal_nostrcache` wins if both
-cache tags are present.
+legacy `Mul`, `Div`, and `Avg`, and so for `MulInt`, `DivInt`, `DivBy`, and the
+truncating steps of `Accumulator` (`AddMul`, `Div`) and `WeightedAvg` (`Add`,
+`Avg`); strict parsing, `MaxPrec`, exact APIs, and direct-round APIs remain at
+19 places. `zerodecimal_nostrcache` wins if both cache tags are present.
 
 CI runs the full suite across all 12 precision/cache combinations and on
 Linux/386. `make test-matrix` also cross-compiles and vets Linux `386` and
@@ -582,12 +604,14 @@ were established.
   overflow oracle is *iff*: every `ErrOverflow` must be proven exact and every
   fitting result must be returned — a spurious error fails as loudly as a
   wrong value.
-- **49 differential fuzz targets** (`make fuzz-all`): legacy, exact,
-  direct-round, and aggregate arithmetic; parsing and canonicalization; text,
-  JSON, binary, and SQL boundaries; nil receivers; cache modes; formatting;
-  float conversion; division primitives; and structural invariants.
-  shopspring/decimal, math/big, and quagmt/udecimal serve as independent
-  oracles where applicable.
+- **68 differential fuzz targets** (`make fuzz-all`): legacy, exact,
+  direct-round, and aggregate arithmetic; streaming sums and weighted means,
+  `Allocate` and `Split`, and the `Divisor` APIs; run-time and multiple
+  rounding; parsing and canonicalization; text, JSON, binary, SQL, and
+  PostgreSQL NUMERIC boundaries; `math/big` conversions; nil receivers; cache
+  modes; formatting; float conversion; division primitives; and structural
+  invariants. shopspring/decimal, math/big, and quagmt/udecimal serve as
+  independent oracles where applicable.
 - **6.5+ million fixed-seed primitive cases**: the u128/u256 primitives and
   every reciprocal-division path are verified against `bits.Div64` and
   `big.Int` at carry, limb, power-of-ten, and exact-overflow boundaries plus

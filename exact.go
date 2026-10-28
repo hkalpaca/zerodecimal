@@ -3,7 +3,14 @@ package zerodecimal
 import "math/bits"
 
 // RoundingMode selects how a discarded nonzero remainder affects the result
-// of MulRound, DivRound, and AvgRound.
+// of every operation that takes one: MulRound, DivRound, MulAddRound,
+// MulDivRound, and AvgRound, which round once from the exact result;
+// DivRoundBy and MulDivRoundBy, the forms of DivRound and MulDivRound for a
+// precomputed Divisor; RoundTo and RoundToMultiple, which round an existing
+// Decimal; the finishers Accumulator.DivRound and WeightedAvg.AvgRound; and the
+// Must twins MustMulRound, MustDivRound, MustMulAddRound, MustMulDivRound,
+// MustAvgRound, and MustRoundTo. A value other than the six below is
+// ErrInvalidRoundingMode, which the twins panic with.
 type RoundingMode uint8
 
 const (

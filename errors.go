@@ -22,15 +22,24 @@ func (underflowError) Is(target error) bool {
 // allocation-free; match with errors.Is.
 var (
 	// ErrOverflow is returned when the exact result of an operation does not
-	// fit a 128-bit coefficient at the result precision.
+	// fit a 128-bit coefficient at the result precision. The finishers of an
+	// Accumulator or WeightedAvg also return it once a same-sign running total
+	// has outgrown the accumulator's 256-bit width.
 	ErrOverflow = errors.New("zerodecimal: value overflows 128-bit coefficient")
 
-	// ErrDivideByZero is returned by Div, DivExact, DivRound, QuoRem, and Mod
-	// when the divisor is zero.
+	// ErrDivideByZero is returned when a divisor is zero: by Div, DivExact,
+	// DivRound, MulDivRound, DivInt (for n == 0), QuoRem, and Mod; by
+	// NewDivisor, and by DivBy, DivRoundBy, and MulDivRoundBy given a zero or
+	// nil Divisor; by RoundToMultiple for a zero step; by Accumulator.Div,
+	// Accumulator.DivRound, WeightedAvg.Avg, and WeightedAvg.AvgRound for a zero
+	// denominator or total weight; by Allocate when there are no weights or they
+	// sum to zero; and by Split when n ≤ 0. The Must twins of those that have
+	// one panic with it instead.
 	ErrDivideByZero = errors.New("zerodecimal: division by zero")
 
 	// ErrInexact is returned by exact arithmetic when the mathematical result
-	// cannot be represented without discarding nonzero fractional digits.
+	// cannot be represented without discarding nonzero fractional digits, and
+	// by Allocate and Split when total has nonzero digits beyond places.
 	ErrInexact = errors.New("zerodecimal: exact result is not representable")
 
 	// ErrUnderflow is returned by exact arithmetic when a nonzero mathematical
@@ -68,7 +77,8 @@ var (
 	ErrNilReceiver = errors.New("zerodecimal: nil receiver")
 
 	// ErrInvalidFloat is returned by float constructors for NaN or infinities,
-	// and by ParsePgNumeric for a PostgreSQL NUMERIC NaN or ±Infinity.
+	// and for a PostgreSQL NUMERIC NaN or ±Infinity by ParsePgNumeric and, for
+	// their text forms, by the pgxdecimal codec.
 	ErrInvalidFloat = errors.New("zerodecimal: NaN or Infinity")
 
 	// ErrIntPartOverflow is returned when the integer part does not fit int64.

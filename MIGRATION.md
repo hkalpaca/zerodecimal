@@ -39,6 +39,25 @@ running sums that may pass 128 bits. At the default `DefaultPrec` of 19, its
 `DivRound(den, 16, ToNearestAway)` returns what udecimal's `Div` followed by
 `RoundHAZ(16)` returns whenever that result fits 128 bits.
 
+One representation difference remains. `Accumulator.Sum` carries the greatest
+precision of any term added, as `Sum` does, so a total that cancels to exactly
+zero mid-stream keeps that precision, while a udecimal `Add` chain (or a
+`MustAdd` chain) restarts at the next term's precision. Adding `1.000000001`,
+`-1.000000001`, and `2.5` gives `2.5` at precision 9 from the accumulator and
+at precision 1 from the chain. The values are equal, and `Equal`, `Cmp`, and
+`String` agree; apply `Trim` before comparing the results with `==` or using
+them as map keys.
+
+`WeightedAvg` replaces a hand-rolled weighted mean that keeps `Σ value·weight`
+and `Σ weight` in two `Decimal`s, such as a volume-weighted average price. Its
+sums are exact and independent of row order, and the numerator may pass 128
+bits before it is divided. `Add` truncates each `value×weight` product at
+`DefaultPrec` places, as `Mul` does; pass an exact product, such as
+`value.MulExact(weight)`, to `AddTotal` when that truncation matters. `Avg`
+truncates the quotient as `Div` does, and `AvgRound` rounds the exact quotient
+of the sums once. A zero total weight, as in an empty stream, returns
+`ErrDivideByZero`, so the caller decides what an empty mean is.
+
 `QuoRem` and `Mod` now recognize an aligned divisor wider than 128 bits. When
 that divisor exceeds the numerator they return the exact `q = 0, r = d`
 result instead of `ErrOverflow`.
