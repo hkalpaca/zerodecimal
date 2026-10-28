@@ -831,6 +831,8 @@ func FuzzInvariants(f *testing.F) {
 				require.Equalf(t, Decimal{}, d, "zero must be canonical: d=%+v a=%+v b=%+v", d, a, b)
 			}
 			require.LessOrEqualf(t, d.Prec(), MaxPrec, "precision bound: d=%+v a=%+v b=%+v", d, a, b)
+			require.Equalf(t, d.Trim().Prec(), d.FracDigits(), "FracDigits is the trimmed precision: d=%+v", d)
+			require.Equalf(t, d.Equal(d.Truncate(places)), d.IsRounded(places), "IsRounded matches Truncate: d=%+v places=%d", d, places)
 			s := d.String()
 			reparsed, err := NewFromString(s)
 			require.NoErrorf(t, err, "canonical string must reparse: %q from d=%+v", s, d)
