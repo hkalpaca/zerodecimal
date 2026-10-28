@@ -182,9 +182,9 @@ func (a *Accumulator) addWide(w u256, neg bool, prec uint8) {
 	}
 }
 
-// total returns the magnitude and sign of the signed total tot[0] - tot[1],
-// and false once the sticky overflow flag is set.
-func (a *Accumulator) total() (u256, bool, bool) {
+// total returns the magnitude mag and sign neg of the signed total
+// tot[0] - tot[1]; ok is false once the sticky overflow flag is set.
+func (a *Accumulator) total() (mag u256, neg, ok bool) {
 	if a.overflow {
 		return u256{}, false, false
 	}

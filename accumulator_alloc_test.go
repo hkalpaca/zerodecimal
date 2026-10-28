@@ -36,6 +36,15 @@ var (
 		a.AddMul(accAllocMax, accAllocMax)
 		a.AddMul(accAllocMax, accAllocMax)
 	})
+	// accAllocNearFull holds (2^128-1)^2 = 2^256-2^129+1 at precision 0: it
+	// fits, but raising it to MaxPrec does not, so Add(accAllocFine) sets the
+	// sticky flag.
+	accAllocNearFull = accAllocBuild(func(a *Accumulator) { a.AddMul(accAllocMax, accAllocMax) })
+	// accAllocTwoLimbFine is a two-limb coefficient (about 2^104) at MaxPrec:
+	// times accAllocFine its 38 places take addMulWide's truncation, one
+	// reciprocal pass by 10^19 by default and two under prec9/prec12, and
+	// the truncated term stays nonzero under every tag.
+	accAllocTwoLimbFine = Decimal{coef: u128{hi: 1 << 40, lo: 5}, prec: MaxPrec}
 )
 
 func accAllocBuild(fill func(a *Accumulator)) Accumulator {
@@ -58,10 +67,15 @@ func TestAccumulatorAllocs(t *testing.T) {
 		{name: "add_raises_precision", fn: func() { accAllocAcc = accAllocAt4; accAllocAcc.Add(accAllocFine) }},
 		{name: "add_coarser_term", fn: func() { accAllocAcc = accAllocAt19; accAllocAcc.Add(accAllocCents) }},
 		{name: "add_zero", fn: func() { accAllocAcc = accAllocAt19; accAllocAcc.Add(Decimal{}) }},
-		{name: "add_sets_sticky_overflow", fn: func() { accAllocAcc = accAllocSticky; accAllocAcc.Add(accAllocFine) }},
+		{name: "add_sets_sticky_overflow", fn: func() { accAllocAcc = accAllocNearFull; accAllocAcc.Add(accAllocFine) }},
+		{name: "add_raise_when_sticky", fn: func() { accAllocAcc = accAllocSticky; accAllocAcc.Add(accAllocFine) }},
 		{name: "addmul_exact", fn: func() { accAllocAcc = accAllocAt4; accAllocAcc.AddMul(accAllocQty, accAllocCents) }},
 		{name: "addmul_truncating", fn: func() { accAllocAcc = accAllocAt19; accAllocAcc.AddMul(accAllocQty, accAllocPrice) }},
 		{name: "addmul_wide", fn: func() { accAllocAcc = accAllocAt4; accAllocAcc.AddMul(accAllocWide, accAllocWide) }},
+		{name: "addmul_wide_truncating", fn: func() {
+			accAllocAcc = accAllocAt19
+			accAllocAcc.AddMul(accAllocTwoLimbFine, accAllocFine)
+		}},
 		{name: "addmul_sets_sticky_overflow", fn: func() { accAllocAcc = accAllocAt19; accAllocAcc.AddMul(accAllocMax, accAllocMax) }},
 		{name: "reset", fn: func() { accAllocAcc = accAllocWideTotal; accAllocAcc.Reset() }},
 		{name: "sum", fn: func() { accAllocResult, errAccAlloc = accAllocAt4.Sum() }},
@@ -110,14 +124,42 @@ func TestAccumulatorAllocFixtures(t *testing.T) {
 	if _, err := accAllocSticky.Sum(); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("sticky Sum: got %v, want ErrOverflow", err)
 	}
+	// The two *_sets_sticky_overflow gates must measure the transition: the
+	// fixture is clear before the term and flagged after it.
+	if accAllocAt19.overflow || accAllocNearFull.overflow {
+		t.Fatal("the sticky-transition fixtures must start without the flag")
+	}
+	if _, err := accAllocNearFull.Sum(); !errors.Is(err, ErrOverflow) || accAllocNearFull.prec != 0 {
+		t.Fatalf("near-full fixture: got %v at precision %d; want a wide total at precision 0", err, accAllocNearFull.prec)
+	}
 	a := accAllocAt19
 	a.AddMul(accAllocMax, accAllocMax)
 	if !a.overflow {
 		t.Fatal("addmul_sets_sticky_overflow must set the flag")
 	}
+	a = accAllocNearFull
+	a.Add(accAllocFine)
+	if !a.overflow || a.prec != MaxPrec {
+		t.Fatal("add_sets_sticky_overflow must raise the precision and set the flag")
+	}
 	a = accAllocSticky
 	a.Add(accAllocFine)
 	if !a.overflow || a.prec != MaxPrec {
-		t.Fatal("add_sets_sticky_overflow must raise the precision with the flag set")
+		t.Fatal("add_raise_when_sticky must raise the precision with the flag kept")
+	}
+
+	// addmul_wide_truncating: a two-limb operand takes addMulWide, and the
+	// 38-place product truncates to DefaultPrec; the result must be the value
+	// legacy Mul has, added to the fixture's 10^-19.
+	d, e := accAllocTwoLimbFine, accAllocFine
+	if d.coef.hi == 0 || d.prec+e.prec <= DefaultPrec {
+		t.Fatal("addmul_wide_truncating must have a two-limb operand and truncate")
+	}
+	a = accAllocAt19
+	a.AddMul(d, e)
+	got, err := a.Sum()
+	product := d.MustMul(e)
+	if want := accAllocFine.MustAdd(product); err != nil || !got.Equal(want) || product.IsZero() {
+		t.Fatalf("addmul_wide_truncating: got %v, %v; want %v with a nonzero product %v", got, err, want, product)
 	}
 }
