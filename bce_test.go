@@ -53,6 +53,7 @@ func TestBoundsCheckFreeHotPaths(t *testing.T) {
 		{name: "pow10_operand_go", file: "pow10_operand.go"},
 		{name: "round_go", file: "round.go"},
 		{name: "rescale_go", file: "rescale.go"},
+		{name: "isrounded_go", file: "isrounded.go"},
 		{name: "u128_go", file: "u128.go"},
 		{name: "u256_go", file: "u256.go"},
 	}
