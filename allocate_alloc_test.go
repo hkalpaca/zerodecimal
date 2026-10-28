@@ -29,11 +29,13 @@ var (
 	// the largest truncated share is 2^128-2, 2^128-1 taking a leftover unit,
 	// or 2^128; and 2^128-1 keeping its value after a no-write ranking.
 	allocateAllocEdgeWeights = allocateInts(2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
-	allocateAllocBelow       = RequireFromString("323268248574891540290205877060179800882")
-	allocateAllocEdgeOver    = RequireFromString("323268248574891540290205877060179800883")
-	allocateAllocOver        = RequireFromString("323268248574891540290205877060179800884")
-	allocateAllocKeepWeights = allocateInts(6, 6, 6, 8, 8, 2, 2, 5, 8, 2)
-	allocateAllocKeep        = RequireFromString("225437068085121732044485677423546440089")
+	// The same shares padded with zero weights to 65, past the stack buffer.
+	allocateAllocEdgeWeights65 = append(allocateInts(2, 2, 2, 2, 2, 2, 2, 2, 2, 1), make([]Decimal, 55)...)
+	allocateAllocBelow         = RequireFromString("323268248574891540290205877060179800882")
+	allocateAllocEdgeOver      = RequireFromString("323268248574891540290205877060179800883")
+	allocateAllocOver          = RequireFromString("323268248574891540290205877060179800884")
+	allocateAllocKeepWeights   = allocateInts(6, 6, 6, 8, 8, 2, 2, 5, 8, 2)
+	allocateAllocKeep          = RequireFromString("225437068085121732044485677423546440089")
 	// Split: two shares of exactly 2^128-1, and seven of which five need 2^128.
 	allocateAllocSplitFits = RequireFromString("68056473384187692692674921486353642291")
 	allocateAllocSplitOver = RequireFromString("238197656844656924424362225202237748019")
@@ -54,8 +56,10 @@ func allocateAllocWeights(n int) []Decimal {
 // TestAllocateAllocs pins the documented allocation counts: none with enough
 // dst capacity up to 64 weights, on every division path, past 2^128 units
 // (including the no-write ranking that settles an edge share) and on every
-// error path; exactly one scratch buffer for more weights; and one more for a
-// dst that must grow. Split never allocates beyond growing dst.
+// error path; exactly one scratch buffer when more weights are ranked, also
+// when the ranking settles an ErrOverflow, but none past 64 weights for a
+// zero total or an error found before ranking; and one more for a dst that
+// must grow. Split never allocates beyond growing dst.
 func TestAllocateAllocs(t *testing.T) {
 	if raceEnabled {
 		t.Skip("allocation counts are unreliable under -race")
@@ -116,6 +120,12 @@ func TestAllocateAllocs(t *testing.T) {
 		}},
 		{"edge_overflow_error", 0, ErrOverflow, func() {
 			allocateAllocOut, errAllocateAlloc = Allocate(allocateAllocDst, allocateAllocEdgeOver, allocateAllocEdgeWeights, 1)
+		}},
+		{"overflow_error_65", 0, ErrOverflow, func() {
+			allocateAllocOut, errAllocateAlloc = Allocate(allocateAllocDst, allocateAllocOver, allocateAllocEdgeWeights65, 1)
+		}},
+		{"edge_overflow_error_65", 1, ErrOverflow, func() {
+			allocateAllocOut, errAllocateAlloc = Allocate(allocateAllocDst, allocateAllocEdgeOver, allocateAllocEdgeWeights65, 1)
 		}},
 		{"split", 0, nil, func() {
 			allocateAllocOut, errAllocateAlloc = Split(allocateAllocDst, allocateAllocTotal, 65, 2)

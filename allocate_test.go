@@ -121,8 +121,9 @@ func allocateWantFinish(coefs []*big.Int, byRem func(a, b int) int, left *big.In
 // same shares in representation. It also pins the two properties the oracle
 // implies, independently of it: the shares sum exactly to total, and each
 // lies less than one unit of 10^-places from its exact share. The integer
-// model the fuzz targets use must agree with the big.Rat one.
-func requireAllocateOracle(t *testing.T, total Decimal, weights []Decimal, places uint8) {
+// model the fuzz targets use must agree with the big.Rat one. It reports
+// whether the oracle has Allocate succeed.
+func requireAllocateOracle(t *testing.T, total Decimal, weights []Decimal, places uint8) bool {
 	t.Helper()
 	want, wantErr := allocateWant(total, weights, places)
 	wantInt, wantIntErr := allocateWantInt(total, weights, places)
@@ -132,11 +133,12 @@ func requireAllocateOracle(t *testing.T, total Decimal, weights []Decimal, place
 	if wantErr != nil {
 		require.ErrorIsf(t, err, wantErr, "total=%v weights=%v places=%d", total, weights, places)
 		require.Emptyf(t, got, "an error returns dst[:0]: total=%v weights=%v", total, weights)
-		return
+		return false
 	}
 	require.NoErrorf(t, err, "total=%v weights=%v places=%d", total, weights, places)
 	require.Equalf(t, want, got, "total=%v weights=%v places=%d", total, weights, places)
 	requireAllocateProperties(t, total, weights, places, got)
+	return true
 }
 
 // requireAllocateProperties checks shares against total and weights: every
@@ -384,12 +386,11 @@ func TestLargestRemainderOverflowBoundary(t *testing.T) {
 			hi := allocateCeilDiv(new(big.Int).Mul(new(big.Int).Add(target, big.NewInt(1)), sum), scale)
 			for c := lo; c.Cmp(hi) < 0 && c.BitLen() <= 128; c = new(big.Int).Add(c, big.NewInt(1)) {
 				total := newDecimal(exactU128FromBig(c), trial%2 == 0, 0)
-				requireAllocateOracle(t, total, weights, places)
-				_, wantErr := allocateWant(total, weights, places)
+				ok := requireAllocateOracle(t, total, weights, places)
 				units := new(big.Int).Mul(c, exactPow10(int(places)))
-				kind := allocateBoundaryKind(target, wantErr, units, aligned, sum)
+				kind := allocateBoundaryKind(target, ok, units, aligned, sum)
 				kinds[path+" "+kind]++
-				if wantErr != nil {
+				if !ok {
 					inPlace := slices.Clone(weights)
 					_, err := Allocate(inPlace, total, inPlace, places)
 					require.ErrorIs(t, err, ErrOverflow)
@@ -423,17 +424,18 @@ func allocateAligned(weights []Decimal) ([]*big.Int, *big.Int) {
 }
 
 // allocateBoundaryKind names a boundary case by its largest truncated share,
-// target: "certain" at 2^128 or more; at 2^128-1 "edge_overflow" when a
-// leftover unit overflows it, else "edge_fits" ("edge_exact" when no share at
-// 2^128-1 has a remainder); "below" under 2^128-1.
-func allocateBoundaryKind(target *big.Int, wantErr error, units *big.Int, aligned []*big.Int, sum *big.Int) string {
+// target, and whether the allocation succeeds (ok): "certain" at 2^128 or
+// more; at 2^128-1 "edge_overflow" when a leftover unit overflows it, else
+// "edge_fits" ("edge_exact" when no share at 2^128-1 has a remainder);
+// "below" under 2^128-1.
+func allocateBoundaryKind(target *big.Int, ok bool, units *big.Int, aligned []*big.Int, sum *big.Int) string {
 	switch target.Cmp(allocateTwoTo128(-1)) {
 	case 1:
 		return "certain"
 	case -1:
 		return "below"
 	}
-	if wantErr != nil {
+	if !ok {
 		return "edge_overflow"
 	}
 	for _, a := range aligned {
@@ -950,8 +952,11 @@ func TestSplitOverflowBoundary(t *testing.T) {
 			for c := lo; c.Cmp(hi) < 0 && c.BitLen() <= 128; c = new(big.Int).Add(c, big.NewInt(1)) {
 				total := newDecimal(exactU128FromBig(c), n%2 == 0, 0)
 				requireSplitOracle(t, total, n, 1)
-				_, err := splitWant(total, n, 1)
-				kinds[map[bool]string{true: "overflow", false: "fits"}[err != nil]]++
+				if _, err := splitWant(total, n, 1); err != nil {
+					kinds["overflow"]++
+				} else {
+					kinds["fits"]++
+				}
 			}
 		}
 	}

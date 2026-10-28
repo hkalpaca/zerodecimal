@@ -191,7 +191,7 @@ on success and error paths:
 | --- | --- |
 | **exactly 0** | Parsing; legacy, exact, direct-round, and aggregate arithmetic; comparison and rounding; `Trim`; decode and Scan paths; `Append*` with sufficient caller capacity |
 | **exactly 1** | `StringFixed` for every `uint8` places value; `MarshalText`, `MarshalJSON`, and `MarshalBinary` for their returned slice |
-| **exactly 0 with enough `dst` capacity, plus 1 past 64 weights** | `Allocate`, which ranks more than 64 weights in one scratch buffer; `Split`, which never needs one |
+| **exactly 0 with enough `dst` capacity; 1 scratch buffer when more than 64 weights are ranked** | `Allocate`, which ranks only a nonzero total that passed its other checks (ranking can still end in `ErrOverflow`); `Split`, which never ranks |
 | **normally 1** | Uncached multi-byte `String` results; Go may serve a one-byte string from its static table |
 | **exactly 2 in the gated uncached multi-byte case** | `Value`: canonical string plus boxing into `driver.Value` |
 | **exactly 0 when the opt-in cache is enabled and hits** | `String` and valid SQL `Value` paths for cache-window values |

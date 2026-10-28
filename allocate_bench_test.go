@@ -1,6 +1,9 @@
 package zerodecimal
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // Package-level inputs and sinks for the Allocate and Split benchmarks (see
 // alloc_test.go for why neither may be local).
@@ -96,8 +99,7 @@ func BenchmarkAllocate(b *testing.B) {
 // truncating Div whose share is applied n times and loses the residual.
 func BenchmarkSplit(b *testing.B) {
 	for _, n := range []int{3, 64, 1000} {
-		name := map[int]string{3: "3", 64: "64", 1000: "1000"}[n]
-		b.Run("Split/"+name, func(b *testing.B) {
+		b.Run("Split/"+strconv.Itoa(n), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				allocateBenchSink, errAllocateBench = Split(allocateBenchDst, allocateBenchFee, n, 2)

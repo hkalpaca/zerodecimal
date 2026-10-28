@@ -2,9 +2,14 @@ package zerodecimal
 
 import "math/bits"
 
-// apportionStackShares is the most weights Allocate ranks in a stack buffer;
-// more take one scratch allocation.
-const apportionStackShares = 64
+const (
+	// apportionSmallShares sizes the stack buffer for a few weights, the
+	// common case, which is much cheaper to zero than the full one.
+	apportionSmallShares = 8
+	// apportionStackShares is the most weights Allocate ranks in a stack
+	// buffer; more take one scratch allocation.
+	apportionStackShares = 64
+)
 
 // Allocate splits total into len(weights) shares proportional to weights.
 // Each share is rounded to places fractional digits, and the shares sum
@@ -18,9 +23,10 @@ const apportionStackShares = 64
 //
 // The shares overwrite dst[:len(weights)], and the result is returned; dst
 // grows only when its capacity is too small. dst may be weights itself,
-// allocating in place, but must not otherwise overlap it. Allocate does not
-// allocate when cap(dst) ≥ len(weights) and len(weights) ≤ 64; with more
-// weights, ranking the remainders takes one scratch allocation.
+// computing the shares in place, but must not otherwise overlap it.
+// Allocate does not allocate when cap(dst) ≥ len(weights) and len(weights)
+// ≤ 64; with more weights, ranking the remainders takes one scratch
+// allocation, also when the ranking settles an ErrOverflow.
 //
 // Validation errors take precedence in this order: ErrPrecOutOfRange when
 // places > MaxPrec, ErrNegativeWeight for any negative weight,
@@ -68,8 +74,8 @@ func Allocate(dst []Decimal, total Decimal, weights []Decimal, places uint8) ([]
 	// the buffer a few shares need cheap to zero.
 	var ranked []apportionRank
 	switch n := len(weights); {
-	case n <= 8:
-		var buf [8]apportionRank
+	case n <= apportionSmallShares:
+		var buf [apportionSmallShares]apportionRank
 		ranked = buf[:0]
 	case n <= apportionStackShares:
 		var buf [apportionStackShares]apportionRank
