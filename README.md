@@ -156,6 +156,7 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `QuoRem`, `Mod` | `ErrDivideByZero`, `ErrOverflow` | `MustQuoRem`, `MustMod` |
+| `RoundToMultiple` | `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `MulDivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `Sum`, `Avg` | `ErrOverflow` | `MustSum`, `MustAvg` |
 | `Rescale` | `ErrPrecOutOfRange`, `ErrOverflow` | `MustRescale` |
@@ -244,6 +245,13 @@ and rounding a negative value to zero yields the canonical unsigned zero.
 pinned tie-by-tie against its shopspring equivalent in
 [crosscheck_test.go](crosscheck_test.go) and fuzzed in
 [fuzz_test.go](fuzz_test.go).
+
+`RoundToMultiple(step, mode)` rounds to a multiple of an arbitrary step
+instead of a power of ten — a tick or lot size, or a corporate-action rule
+such as 0.001 shares — in any `RoundingMode`, directly from the exact quotient
+`d/|step|`. The result keeps `d`'s sign and carries `step`'s precision; unlike
+the family above it is fallible, returning `ErrDivideByZero` for a zero step
+and `ErrOverflow` when the multiple does not fit at that precision.
 
 ## JSON and SQL boundaries
 
