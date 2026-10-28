@@ -121,7 +121,7 @@ explicit, use:
 | Intent | Multiplication/division | Mean |
 | --- | --- | --- |
 | Require an exact `Decimal` representation | `MulExact`, `DivExact` | `AvgExact` |
-| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`) | `AvgRound` |
+| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`) | `AvgRound` (unweighted, as are `Avg` and `AvgExact`); `WeightedAvg.AvgRound` (Σ value·weight / Σ weight over two exact streamed sums, rounded once; `WeightedAvg.Add` truncates each product like `Mul`, and `WeightedAvg.Avg` the quotient like `Div`) |
 
 Exact operations return `ErrInexact` when nonzero digits would be discarded,
 `ErrUnderflow` for a nonzero result below `10^-MaxPrec`, and `ErrOverflow` for
@@ -200,6 +200,8 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `Sum`, `Avg` | `ErrOverflow` | `MustSum`, `MustAvg` |
 | `Accumulator.Sum`, `Accumulator.Div` | `ErrOverflow`, also once a same-sign total passed 256 bits; `Div` also `ErrDivideByZero` | — |
 | `Accumulator.DivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
+| `WeightedAvg.Total`, `WeightedAvg.Weight`, `WeightedAvg.Avg` | `ErrOverflow` as for `Accumulator.Sum` and `Accumulator.Div`; `Avg` also `ErrOverflow` for a total weight past 128 bits and `ErrDivideByZero` for a zero one | — |
+| `WeightedAvg.AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
 | `Rescale` | `ErrPrecOutOfRange`, `ErrOverflow` | `MustRescale` |
 | `RoundTo` | `ErrInvalidRoundingMode` | `MustRoundTo` |
 | `IntPart` | `ErrIntPartOverflow` | — |
@@ -231,6 +233,7 @@ on success and error paths:
 | **exactly 1** | `StringFixed` for every `uint8` places value; `MarshalText`, `MarshalJSON`, and `MarshalBinary` for their returned slice |
 | **exactly 0 with enough `dst` capacity; 1 scratch buffer when more than 64 weights are ranked** | `Allocate`, which ranks only a nonzero total that passed its other checks (ranking can still end in `ErrOverflow`); `Split`, which never ranks |
 | **exactly 0** | Every `Accumulator` method: `Add`, `Sub`, `AddMul`, `Reset`, and the finishers `Sum`, `Div`, and `DivRound`, on success and error |
+| **exactly 0** | Every `WeightedAvg` method: `Add`, `AddTotal`, `Reset`, and the finishers `Total`, `Weight`, `Avg`, and `AvgRound`, on success and error |
 | **exactly 0 in the PostgreSQL binary codec** | `ParsePgNumeric` on every success and error path; `AppendPgNumeric` with `PgNumericMaxLen` spare capacity in `b` |
 | **normally 1** | Uncached multi-byte `String` results; Go may serve a one-byte string from its static table |
 | **exactly 2 in the gated uncached multi-byte case** | `Value`: canonical string plus boxing into `driver.Value` |
