@@ -40,6 +40,13 @@ test-32bit-compile:
 
 test-matrix: test-tags test-32bit-compile
 
+# The pgx codec is the nested pgxdecimal module, which the ./... runs above
+# never enter: vet, race tests, then its alloc gates without race. Set
+# ZD_PG_DSN to a local throwaway PostgreSQL to add its integration tests.
+.PHONY: test-pgx
+test-pgx:
+	cd pgxdecimal && go vet ./... && go test -race -count=1 ./... && go test -run '^Test.*Alloc' -count=1 ./...
+
 # Single test: go test -run 'TestParse/empty_string' .
 # Single subtest under race: go test -race -run 'TestRoundBank/tie_negative' .
 
