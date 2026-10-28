@@ -192,8 +192,9 @@ func pgRefEncode(d Decimal) []byte {
 }
 
 // pgRefDecode is the reference decoder. It validates what numeric_recv
-// validates, reading ndigits as the int16 numeric_send writes (numeric_recv
-// reads it unsigned, which differs only past 32767 digits). It computes the
+// validates, except that it reads ndigits as a signed int16, as
+// ParsePgNumeric does (numeric_recv reads it unsigned, and numeric_send
+// writes 0x8000..0x9000 for values of 131,072 digits or more). It computes the
 // value as num·10^exp with big.Int and applies the text parser's range
 // policy in the text parser's order: ErrOverflow when the significant digits
 // exceed 128 bits, then ErrPrecOutOfRange past MaxPrec places, then
@@ -399,6 +400,46 @@ func TestPgNumericPostgresVectors(t *testing.T) {
 	require.GreaterOrEqual(t, encoded, 70, "too few vectors exercised the encoder")
 }
 
+// TestPgNumericLongTextRenderings pins where the two protocols part ways: a
+// text rendering longer than ParseBytes' 200-byte limit fails with
+// ErrMaxStrLen, while ParsePgNumeric still decodes the binary form or returns
+// its range sentinel. The texts and bytes were captured from PostgreSQL 18.6
+// (1.5::numeric(1000,500), 0.1::numeric(400,199), 0::numeric(1000,500) and
+// 1e-300::numeric).
+func TestPgNumericLongTextRenderings(t *testing.T) {
+	tests := []struct {
+		name string
+		text string // PostgreSQL's rendering
+		wire string // numeric_send
+		want string // canonical decoded value; "" when err is set
+		err  error
+	}{
+		{name: "numeric_1000_500", text: "1.5" + strings.Repeat("0", 499), wire: "00020000000001f400011388", want: "1.5"},
+		{name: "numeric_400_199", text: "0.1" + strings.Repeat("0", 198), wire: "0001ffff000000c703e8", want: "0.1"},
+		{name: "zero_numeric_1000_500", text: "0." + strings.Repeat("0", 500), wire: "00000000000001f4", want: "0"},
+		{name: "1e-300", text: "0." + strings.Repeat("0", 299) + "1", wire: "0001ffb50000012c0001", err: ErrPrecOutOfRange},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Greater(t, len(tc.text), maxParseLen)
+			_, textErr := ParseBytes([]byte(tc.text))
+			require.ErrorIs(t, textErr, ErrMaxStrLen)
+
+			wire := pgBytes(t, tc.wire)
+			require.Equal(t, wire, pgRefEncodeText(tc.text, binary.BigEndian.Uint16(wire[6:])), "text and bytes must be one value")
+			got, err := ParsePgNumeric(wire)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+				require.Equal(t, Decimal{}, got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, RequireFromString(tc.want), got)
+			}
+			requirePgDecode(t, wire)
+		})
+	}
+}
+
 // TestPgNumericRoundTrip requires ParsePgNumeric(d.AppendPgNumeric(nil)) to
 // be d.Trim() for boundary-biased values (randCrossDecimal) and for
 // coefficient widths uniform over 1..128 bits at every precision and both
@@ -564,7 +605,9 @@ func TestParsePgNumericMalformed(t *testing.T) {
 		{name: "ndigits_0_one_digit", src: pgWire(0, 0, 0, 0, 1)},
 		{name: "odd_trailing_byte", src: append(pgWire(1, 0, 0, 0, 1), 0)},
 		{name: "ndigits_minus_1", src: pgWire(0xFFFF, 0, 0, 0)},
-		// Read as uint16, these lengths would match: ndigits is an int16.
+		// Read unsigned, as numeric_recv reads it, these lengths match (it
+		// accepts the 0x8000 zero digits as 0); ParsePgNumeric reads ndigits
+		// as int16 and rejects both. See TestParsePgNumericLargeDigitCounts.
 		{name: "ndigits_0x8000_uint16_length", src: pgWire(0x8000, 0, 0, 0, make([]uint16, 0x8000)...)},
 		{name: "ndigits_0xFFFF_uint16_length", src: pgWire(0xFFFF, 0, 0, 0, make([]uint16, 0xFFFF)...)},
 		{name: "digit_10000", src: pgDigitsWire(0, 0, 0, 10000)},
@@ -595,6 +638,38 @@ func TestParsePgNumericMalformed(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParsePgNumeric(tc.src)
+			require.ErrorIs(t, err, ErrInvalidBinaryData)
+			require.Equal(t, Decimal{}, got)
+			requirePgDecode(t, tc.src)
+		})
+	}
+}
+
+// TestParsePgNumericLargeDigitCounts pins the documented ndigits behaviour:
+// numeric_send writes counts of 0x8000..0x9000 for values of 131,072 digits
+// or more, and numeric_recv reads the count unsigned, while ParsePgNumeric
+// reads it as int16 and reports every such count as ErrInvalidBinaryData; no
+// Decimal can hold those values. The encodings are numeric_send's bytes for
+// repeat('1', 131072) and for that plus a 16383-digit fraction of ones,
+// rebuilt by the reference encoder and held to the header, length and tail
+// captured from PostgreSQL 18.6.
+func TestParsePgNumericLargeDigitCounts(t *testing.T) {
+	ones := strings.Repeat("1", 131072)
+	tests := []struct {
+		name       string
+		src        []byte
+		head, tail string
+		length     int
+	}{
+		{name: "ndigits_0x8000", src: pgRefEncodeText(ones, 0), head: "80007fff0000000004570457", tail: "04570457", length: 65544},
+		{name: "ndigits_0x9000", src: pgRefEncodeText(ones+"."+strings.Repeat("1", 16383), 0x3FFF), head: "90007fff00003fff04570457", tail: "04570456", length: 73736},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Len(t, tc.src, tc.length)
+			require.Equal(t, tc.head, hex.EncodeToString(tc.src[:12]))
+			require.Equal(t, tc.tail, hex.EncodeToString(tc.src[len(tc.src)-4:]))
 			got, err := ParsePgNumeric(tc.src)
 			require.ErrorIs(t, err, ErrInvalidBinaryData)
 			require.Equal(t, Decimal{}, got)

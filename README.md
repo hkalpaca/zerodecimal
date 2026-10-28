@@ -274,8 +274,11 @@ always uses, sends `NUMERIC` as base-10000 digits (`numeric_send`).
 `math/big`: decoding never allocates and encoding only grows a `b` that lacks
 capacity, while pgx's `pgtype.Numeric` costs at least one `*big.Int` per
 value. Decoding returns the canonical value that `ParseBytes`
-returns for the column's text form, so both protocols scan to `==` values, and
-it accepts zero digits at either end, as PostgreSQL does. Binary `NaN` and
+returns for the column's text form, so both protocols scan to `==` values
+whenever that rendering fits `ParseBytes`' 200-byte limit; a longer one (a
+`numeric(1000,500)` value, say) fails `ParseBytes` with `ErrMaxStrLen`, while
+`ParsePgNumeric` still decodes it or returns its range sentinel. Decoding
+accepts zero digits at either end, as PostgreSQL does. Binary `NaN` and
 `±Infinity` return `ErrInvalidFloat`; their text forms fail `ParseBytes` with
 `ErrInvalidFormat`. `AppendPgNumeric` cannot fail and writes at most
 `PgNumericMaxLen` (30) bytes. The root module takes no pgx dependency. A pgx v5

@@ -9,7 +9,7 @@ import (
 // numeric_recv reads it (src/backend/utils/adt/numeric.c). Every field is a
 // big-endian 16-bit word:
 //
-//	ndigits  int16   number of base-10000 digits that follow
+//	ndigits  uint16  number of base-10000 digits that follow
 //	weight   int16   power of 10000 of the first digit
 //	sign     uint16  0x0000 positive, 0x4000 negative, 0xC000 NaN,
 //	                 0xD000 +Infinity, 0xF000 -Infinity (PostgreSQL 14+)
@@ -52,23 +52,31 @@ const PgNumericMaxLen = 30
 
 // ParsePgNumeric decodes PostgreSQL's binary NUMERIC wire format
 // (numeric_send). The result is canonical — trailing fractional zeros
-// removed, exactly what ParseBytes returns for the value's text form — so the
-// binary and text protocols scan to == values. dscale is validated but does
-// not change the value. SQL NULL is the caller's concern (pgx passes src ==
-// nil, which fails here as too short). Zero digits at either end of the digit
-// array are accepted, as numeric_recv accepts them.
+// removed, exactly what ParseBytes returns for the value's text form when
+// that rendering fits ParseBytes' 200-byte limit — so the binary and text
+// protocols then scan to == values. A longer rendering (a numeric(1000,500)
+// column, say) fails ParseBytes with ErrMaxStrLen, while ParsePgNumeric still
+// decodes the value or returns its range sentinel. dscale is validated but
+// does not change the value. SQL NULL is the caller's concern (pgx passes src
+// == nil, which fails here as too short). Zero digits at either end of the
+// digit array are accepted, as numeric_recv accepts them.
 //
 // Errors: ErrInvalidBinaryData for malformed input (fewer than 8 bytes, a
 // length that disagrees with ndigits, a negative ndigits, a digit ≥ 10000, an
 // unknown sign word, dscale > 0x3FFF); ErrInvalidFloat for NaN and ±Infinity;
 // ErrPrecOutOfRange when a nonzero digit lies beyond MaxPrec fractional
-// places; ErrOverflow when the coefficient exceeds 128 bits. Malformed input
-// takes precedence, so a malformed NaN is ErrInvalidBinaryData, and NaN and
-// ±Infinity come next. The range errors follow the text parser's order, so
-// the value's text form fails ParseBytes with the same sentinel. The text
-// protocol renders the special values as NaN, Infinity and -Infinity, which
-// ParseBytes rejects with ErrInvalidFormat, not ErrInvalidFloat. Errors are
-// bare sentinels with a zero Decimal. It never allocates.
+// places; ErrOverflow when the coefficient exceeds 128 bits. ndigits is read
+// as a signed int16, so every count of 0x8000 or more is negative and
+// ErrInvalidBinaryData. numeric_recv reads the count unsigned: numeric_send
+// writes 0x8000..0x9000 only for values of 131,072 digits or more, which no
+// Decimal can hold, and numeric_recv also accepts zero-padded encodings that
+// long. Malformed input takes precedence, so a malformed NaN is
+// ErrInvalidBinaryData, and NaN and ±Infinity come next. The range errors
+// follow the text parser's order, so a text form within ParseBytes' limit
+// fails with the same sentinel. The text protocol renders the special values
+// as NaN, Infinity and -Infinity, which ParseBytes rejects with
+// ErrInvalidFormat, not ErrInvalidFloat. Errors are bare sentinels with a
+// zero Decimal. It never allocates.
 func ParsePgNumeric(src []byte) (Decimal, error) {
 	if len(src) < pgHeaderLen {
 		return Decimal{}, ErrInvalidBinaryData
@@ -78,9 +86,10 @@ func ParsePgNumeric(src []byte) (Decimal, error) {
 	// -32768..-1.
 	weight := int(binary.BigEndian.Uint16(src[2:])^0x8000) - 0x8000
 	sign := binary.BigEndian.Uint16(src[4:])
-	// ndigits is the int16 numeric_send writes, so 0x8000 and above are
-	// negative. (numeric_recv reads it unsigned; the readings differ only
-	// past 32767 digits, far beyond any Decimal.)
+	// ndigits is read as a signed int16, so 0x8000 and above are negative
+	// and rejected. numeric_recv reads it unsigned, and numeric_send writes
+	// 0x8000..0x9000 for values of 131,072 digits or more, which no Decimal
+	// holds (see the doc comment).
 	if ndigits >= 0x8000 || len(src) != pgHeaderLen+2*ndigits || binary.BigEndian.Uint16(src[6:]) > pgDscaleMax {
 		return Decimal{}, ErrInvalidBinaryData
 	}

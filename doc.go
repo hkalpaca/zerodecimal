@@ -85,8 +85,9 @@
 //
 // ParsePgNumeric and AppendPgNumeric convert between Decimal and PostgreSQL's
 // binary NUMERIC wire format, used by the binary protocol and binary COPY,
-// without math/big or allocation; decoding yields the canonical value, the
-// same as parsing the column's text form.
+// without math/big; decoding never allocates, and encoding allocates only
+// when b lacks capacity. Decoding yields the canonical value, the same as
+// parsing the column's text form when that fits ParseBytes' 200-byte limit.
 //
 // # Allocations and cache
 //
