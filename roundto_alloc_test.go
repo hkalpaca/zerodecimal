@@ -10,8 +10,12 @@ import (
 // a caller reading a configured mode would (see alloc_test.go for the rules
 // every gate here follows).
 var (
-	roundToAllocResult Decimal
-	errRoundToAlloc    error
+	// One result and one error sink per call in a measured closure, so every
+	// call's error can be asserted after the measurement.
+	roundToAllocResult  Decimal
+	roundToAllocResult2 Decimal
+	errRoundToAlloc     error
+	errRoundToAlloc2    error
 
 	roundToAllocModes = [...]struct {
 		name string
@@ -36,7 +40,8 @@ var (
 // TestRoundToAllocs gates RoundTo and MustRoundTo at exactly zero allocations
 // on every value shape: each valid mode rounding down and at a no-op places,
 // and the ErrInvalidRoundingMode path both when a rounding would have happened
-// and when places is at or above the precision.
+// and when places is at or above the precision. The error of each call in a
+// measured closure is asserted after the measurement, not just the last one.
 func TestRoundToAllocs(t *testing.T) {
 	if raceEnabled {
 		t.Skip("allocation counts are unreliable under -race")
@@ -46,16 +51,17 @@ func TestRoundToAllocs(t *testing.T) {
 			t.Run(s.name+"/success/"+m.name, func(t *testing.T) {
 				requireAllocs(t, 0, func() {
 					roundToAllocResult, errRoundToAlloc = s.a.RoundTo(2, m.mode)
-					roundToAllocResult, errRoundToAlloc = s.b.RoundTo(MaxPrec, m.mode)
+					roundToAllocResult2, errRoundToAlloc2 = s.b.RoundTo(MaxPrec, m.mode)
 				})
-				if errRoundToAlloc != nil {
-					t.Fatalf("valid mode %d failed: %v", m.mode, errRoundToAlloc)
+				if errRoundToAlloc != nil || errRoundToAlloc2 != nil {
+					t.Fatalf("valid mode %d failed: rounding call %v, no-op call %v",
+						m.mode, errRoundToAlloc, errRoundToAlloc2)
 				}
 			})
 			t.Run(s.name+"/must/"+m.name, func(t *testing.T) {
 				requireAllocs(t, 0, func() {
 					roundToAllocResult = s.a.MustRoundTo(2, m.mode)
-					roundToAllocResult = s.b.MustRoundTo(0, m.mode)
+					roundToAllocResult2 = s.b.MustRoundTo(0, m.mode)
 				})
 			})
 		}
@@ -63,10 +69,11 @@ func TestRoundToAllocs(t *testing.T) {
 			t.Run(s.name+"/invalid/"+m.name, func(t *testing.T) {
 				requireAllocs(t, 0, func() {
 					roundToAllocResult, errRoundToAlloc = s.a.RoundTo(2, m.mode)
-					roundToAllocResult, errRoundToAlloc = s.b.RoundTo(MaxPrec, m.mode)
+					roundToAllocResult2, errRoundToAlloc2 = s.b.RoundTo(MaxPrec, m.mode)
 				})
-				if !errors.Is(errRoundToAlloc, ErrInvalidRoundingMode) {
-					t.Fatalf("invalid mode %d: got %v, want ErrInvalidRoundingMode", m.mode, errRoundToAlloc)
+				if !errors.Is(errRoundToAlloc, ErrInvalidRoundingMode) || !errors.Is(errRoundToAlloc2, ErrInvalidRoundingMode) {
+					t.Fatalf("invalid mode %d: got %v (rounding call) and %v (no-op call), want ErrInvalidRoundingMode from both",
+						m.mode, errRoundToAlloc, errRoundToAlloc2)
 				}
 			})
 		}

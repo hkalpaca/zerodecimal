@@ -355,10 +355,11 @@ func TestRoundToNegativeToZeroIsCanonical(t *testing.T) {
 }
 
 // TestRoundToInvalidMode pins the error contract: every value past
-// TowardNegative, up to the top of uint8, is ErrInvalidRoundingMode with the
-// zero Decimal, for every places value — including places at or above the
-// precision, where the no-op shortcut would otherwise hide the bad mode — and
-// MustRoundTo panics with that same sentinel.
+// TowardNegative, up to the top of uint8 (6..255), is ErrInvalidRoundingMode
+// with the zero Decimal, and MustRoundTo panics with that same sentinel. Each
+// mode is tried at a spread of places values (0, 2, d.Prec(), MaxPrec,
+// MaxPrec+1 and 255), not at every one: the last four are at or above the
+// precision, where the no-op shortcut would otherwise hide the bad mode.
 func TestRoundToInvalidMode(t *testing.T) {
 	tests := []struct {
 		name string

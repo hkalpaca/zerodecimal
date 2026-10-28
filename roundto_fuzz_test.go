@@ -16,10 +16,10 @@ import (
 // exact big.Rat value, and carry the shape every rounding shares; an invalid
 // mode must fail with the zero Decimal, even where places ≥ d.Prec().
 func FuzzRoundTo(f *testing.F) {
-	places := [...]uint8{0, 1, 2, 9, 18, 19, 20, 255}
+	seedPlaces := [...]uint8{0, 1, 2, 9, 18, 19, 20, 255}
 	for i, s := range fuzzCorpus {
 		for mode := range uint8(8) { // 0..5 are the six modes, 6 and 7 are invalid
-			f.Add(s.neg, s.hi, s.lo, s.prec, places[(i+int(mode))%len(places)], mode)
+			f.Add(s.neg, s.hi, s.lo, s.prec, seedPlaces[(i+int(mode))%len(seedPlaces)], mode)
 		}
 	}
 	f.Add(false, uint64(0), uint64(5), uint8(1), uint8(0), uint8(255))
