@@ -18,17 +18,12 @@ var (
 	isRoundedMix = func() (pool [1024]Decimal) {
 		rng := rand.New(rand.NewPCG(0xbe9c4, 0x15520d))
 		for i := range pool {
-			for {
-				// A mantissa of 1..19 digits, then 0..19 appended zeros: one limb
-				// until the product passes 2^64.
-				m := rng.Uint64N(pow10u64[1+rng.IntN(19)]) + 1
-				coef, overflow := mul128by64(u128{lo: m}, pow10u64[rng.IntN(20)])
-				if overflow != 0 {
-					continue
-				}
-				pool[i] = newDecimal(coef, rng.Uint64()&1 == 1, uint8(rng.IntN(20)))
-				break
-			}
+			// A mantissa of 1..19 digits, then 0..19 appended zeros: one limb
+			// until the product passes 2^64. It is at most 10^38 < 2^128, so
+			// the multiply cannot overflow.
+			m := rng.Uint64N(pow10u64[1+rng.IntN(19)]) + 1
+			coef, _ := mul128by64(u128{lo: m}, pow10u64[rng.IntN(20)])
+			pool[i] = newDecimal(coef, rng.Uint64()&1 == 1, uint8(rng.IntN(20)))
 		}
 		return pool
 	}()
@@ -71,8 +66,9 @@ func BenchmarkIsRounded(b *testing.B) {
 
 // BenchmarkFracDigits times FracDigits against Trim().Prec(), the only way to
 // learn a value's significant fractional digits without it. Trim sheds one
-// digit per division, so its cost grows with the zero count; FracDigits
-// divides once and counts the zeros in a fixed ladder.
+// digit per division, so its cost grows with the zero count; FracDigits tests
+// the lowest digit once and then runs at most five multiply-rotate rungs,
+// whatever the zero count (a two-limb value first takes one div2by1 reduction).
 func BenchmarkFracDigits(b *testing.B) {
 	for _, s := range isRoundedShapes {
 		d := s.d

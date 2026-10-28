@@ -107,16 +107,22 @@ func fracDigitsStep(x, inv, maxQuo uint64, s int) (uint64, bool) {
 // coefficient, at most prec of them (Trim stops at precision 0). Caller
 // guarantees d.prec > 0.
 //
-// The zeros are counted on one limb: the coefficient itself, or for two limbs
-// its MaxPrec lowest digits. A value with no trailing zero, the common case,
-// leaves after one test. Otherwise a binary search over 16, 8, 4, 2 and 1
-// zeros sheds them, rem being the digits still allowed to go. Before each
-// step, the zeros still to shed (those x has, up to rem) number fewer than
-// twice its size, so the step fires exactly when that many remain and the
-// greedy descent reaches min(zeros, prec). A coefficient with more zeros than
-// prec stops at prec, and a small prec (money values) runs only its few steps.
-// A zero x, a two-limb value whose MaxPrec lowest digits vanish, fires every
-// step that rem allows and leaves rem 0, an integer.
+// The zeros are counted on one limb x: the coefficient itself, or for two
+// limbs its MaxPrec lowest digits. A value with no trailing zero, the common
+// case, leaves after one test of x%10. Otherwise a binary search sheds the
+// zeros in rungs of 16, 8, 4, 2 and 1, where rem counts the digits still
+// allowed to go: it starts at prec, so a coefficient with more zeros than prec
+// stops at prec, and a small prec (money values) runs only its small rungs.
+//
+// Why the descent is exact. Let R = min(zeros of x, rem), the digits still to
+// shed. Before rung s, R < 2s (before the first rung, R <= prec <= 19 < 32). A
+// rung fires exactly when rem >= s and 10^s divides x, that is when R >= s, and
+// then R - s < s digits remain; a rung that does not fire has R < s. Either way
+// R < s before the next rung, so after the last rung (s = 1) none remain and
+// exactly min(zeros, prec) digits were shed.
+//
+// x is zero only for a two-limb coefficient that is a multiple of 10^MaxPrec;
+// every rung that rem allows then fires and rem ends at 0.
 func (d Decimal) fracDigitsCore() uint8 {
 	x := d.coef.lo
 	if d.coef.hi != 0 {

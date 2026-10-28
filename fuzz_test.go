@@ -790,7 +790,8 @@ func FuzzFloat64(f *testing.F) {
 
 // FuzzInvariants checks the structural contract on every Decimal any
 // operation produces: a zero value is exactly the canonical Decimal{},
-// precision never exceeds MaxPrec, and the canonical string reparses to the
+// precision never exceeds MaxPrec, FracDigits is the precision of Trim and
+// IsRounded agrees with Truncate, and the canonical string reparses to the
 // same value and the same string. Operation errors are ignored here — their
 // exactness is each dedicated target's job; only produced values matter.
 func FuzzInvariants(f *testing.F) {
