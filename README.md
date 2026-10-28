@@ -166,9 +166,9 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `MulInt` | `ErrOverflow` | `MustMulInt` |
 | `DivInt` | `ErrDivideByZero` | `MustDivInt` |
 | `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; division also `ErrDivideByZero` | — |
-| `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | — |
+| `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | `MustMulRound`, `MustDivRound`, `MustMulAddRound`, `MustAvgRound` |
 | `QuoRem`, `Mod` | `ErrDivideByZero`, `ErrOverflow` | `MustQuoRem`, `MustMod` |
-| `MulDivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | — |
+| `MulDivRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrDivideByZero`, `ErrOverflow` | `MustMulDivRound` |
 | `Sum`, `Avg` | `ErrOverflow` | `MustSum`, `MustAvg` |
 | `Rescale` | `ErrPrecOutOfRange`, `ErrOverflow` | `MustRescale` |
 | `IntPart` | `ErrIntPartOverflow` | — |
