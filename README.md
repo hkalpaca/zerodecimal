@@ -153,6 +153,8 @@ twins for call sites with proven bounds; rows marked `—` below have none.
 | `NewFromHiLo` | `ErrPrecOutOfRange` | — |
 | `Add`, `Sub`, `Mul` | `ErrOverflow` | `MustAdd`, `MustSub`, `MustMul` |
 | `Div` | `ErrDivideByZero`, `ErrOverflow` | `MustDiv` |
+| `MulInt` | `ErrOverflow` | `MustMulInt` |
+| `DivInt` | `ErrDivideByZero` | `MustDivInt` |
 | `MulExact`, `DivExact`, `AvgExact` | `ErrInexact`, `ErrUnderflow`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `MulRound`, `DivRound`, `MulAddRound`, `AvgRound` | `ErrPrecOutOfRange`, `ErrInvalidRoundingMode`, `ErrOverflow`; division also `ErrDivideByZero` | — |
 | `QuoRem`, `Mod` | `ErrDivideByZero`, `ErrOverflow` | `MustQuoRem`, `MustMod` |
