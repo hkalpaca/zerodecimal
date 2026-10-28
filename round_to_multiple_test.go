@@ -65,7 +65,9 @@ func TestRoundToMultipleAgainstBigRat(t *testing.T) {
 	widths := [...]int{8, 24, 40, 64, 96, 128}
 	randPrec := func() uint8 { return uint8(rng.Uint64N(uint64(MaxPrec) + 1)) }
 	for i := range 100_000 {
-		d := shapedDecimal(rng, widths[i%6], randPrec())
+		// d's width is drawn independently, so fixed and random steps alike
+		// meet every width.
+		d := shapedDecimal(rng, widths[rng.IntN(len(widths))], randPrec())
 		step := shapedDecimal(rng, widths[(i/6)%6], randPrec())
 		if i%2 == 0 {
 			step = roundToMultipleSteps[(i/2)%len(roundToMultipleSteps)]
@@ -192,9 +194,9 @@ func TestRoundToMultipleScalingBoundaries(t *testing.T) {
 // TestRoundToMultipleEdges pins hand-computed results: a zero step or d, a d
 // already on a multiple (it takes step's precision either way), a step coarser
 // or finer than d, every mode's direction for both signs, a step whose sign is
-// ignored, the finest step 10^-19, and the range: quotients past 2^128, a
-// product past 128 bits, and ties whose rounding direction alone decides
-// overflow.
+// ignored, the finest step 10^-19, a round-up that must carry across the
+// 64-bit limb, and the range: quotients past 2^128, a product past 128 bits,
+// and ties whose rounding direction alone decides overflow.
 func TestRoundToMultipleEdges(t *testing.T) {
 	t.Parallel()
 	maxInt := Decimal{coef: u128{hi: maxUint64, lo: maxUint64}}
@@ -202,6 +204,10 @@ func TestRoundToMultipleEdges(t *testing.T) {
 	// (7·2^128 - 2)/10 over 0.7 is 2^128 - 2/7: the truncated quotient is the
 	// largest 128-bit value with a remainder above half.
 	pastMax := Decimal{coef: u128{hi: 0xb333333333333333, lo: 0x3333333333333333}}
+	// 2^65 - 1/2 over a step of 1 takes the reciprocal arm (a two-limb d, a
+	// 10^-p step): the truncated quotient 2^65 - 1 has a low limb of all ones,
+	// so rounding it up must carry into the high limb.
+	limbCarry := RequireFromString("36893488147419103231.5")
 	tick := MustNew(25, -2)
 	five := NewFromInt(5)
 	finest := MustNew(1, -19)
@@ -251,6 +257,10 @@ func TestRoundToMultipleEdges(t *testing.T) {
 		{"max_by_two_limb_step_toward_zero", maxInt, twoTo64, TowardZero, Decimal{coef: u128{hi: maxUint64}}, nil},
 		{"quotient_rounds_past_2_128", pastMax, MustNew(7, -1), ToNearestEven, Decimal{}, ErrOverflow},
 		{"quotient_truncates_below_2_128_overflows", pastMax, MustNew(7, -1), TowardZero, Decimal{}, ErrOverflow},
+		{"round_up_carries_across_limbs_tie_away", limbCarry, NewFromInt(1), ToNearestAway, RequireFromString("36893488147419103232"), nil},
+		{"round_up_carries_across_limbs_tie_to_even", limbCarry, NewFromInt(1), ToNearestEven, RequireFromString("36893488147419103232"), nil},
+		{"round_up_carries_across_limbs_away", limbCarry, NewFromInt(1), AwayFromZero, RequireFromString("36893488147419103232"), nil},
+		{"truncation_keeps_all_ones_low_limb", limbCarry, NewFromInt(1), TowardZero, RequireFromString("36893488147419103231"), nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

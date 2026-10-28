@@ -2,9 +2,9 @@ package zerodecimal
 
 import "math/bits"
 
-// RoundToMultiple returns the multiple of |step| nearest d under mode: a tick
-// or lot size, or a corporate-action rule such as 0.001 shares or 25 cents.
-// The result is q·|step|, where q is d/|step| rounded to an integer in mode
+// RoundToMultiple returns d rounded in mode to a multiple of |step|, where step
+// is a tick or lot size or a corporate-action rule such as 0.001 shares or 25
+// cents. The result is q·|step|, where q is d/|step| rounded to an integer in mode
 // directly from the exact quotient, so no intermediate truncation can move a
 // tie or drop a sticky digit. The step's sign is ignored: the modes behave as
 // in d.DivRound(step.Abs(), 0, mode), and the result keeps d's sign, so

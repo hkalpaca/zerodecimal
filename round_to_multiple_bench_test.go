@@ -22,9 +22,10 @@ var (
 
 // BenchmarkRoundToMultiple times RoundToMultiple against the chains a caller
 // writes without it. DivRound to 0 places then MulExact by the step returns the
-// same value and representation for a positive step. Sub of Mod, the
-// T-division idiom, is the TowardZero multiple at precision max(d.Prec(),
-// step.Prec()).
+// same value and representation for a positive step when the result fits 128
+// bits at the step's precision; past that, MulExact drops trailing zeros to fit
+// where RoundToMultiple reports ErrOverflow. Sub of Mod, the T-division idiom,
+// is the TowardZero multiple at precision max(d.Prec(), step.Prec()).
 func BenchmarkRoundToMultiple(b *testing.B) {
 	cases := []struct {
 		name    string

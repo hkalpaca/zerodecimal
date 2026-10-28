@@ -250,8 +250,9 @@ pinned tie-by-tie against its shopspring equivalent in
 instead of a power of ten — a tick or lot size, or a corporate-action rule
 such as 0.001 shares — in any `RoundingMode`, directly from the exact quotient
 `d/|step|`. The result keeps `d`'s sign and carries `step`'s precision; unlike
-the family above it is fallible, returning `ErrDivideByZero` for a zero step
-and `ErrOverflow` when the multiple does not fit at that precision.
+the family above it is fallible, returning `ErrInvalidRoundingMode` for a mode
+that is not one of the six, `ErrDivideByZero` for a zero step, and
+`ErrOverflow` when the multiple does not fit at that precision.
 
 ## JSON and SQL boundaries
 
