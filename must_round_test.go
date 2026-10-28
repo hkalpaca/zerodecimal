@@ -153,7 +153,8 @@ func TestMustRoundTwinsResults(t *testing.T) {
 		{"MustDivRound/zero_dividend", func() Decimal { return Decimal{}.MustDivRound(NewFromInt(3), 2, ToNearestEven) }, Decimal{}},
 		{"MustDivRound/negative_divisor", func() Decimal { return NewFromInt(1).MustDivRound(NewFromInt(-3), 4, TowardZero) }, MustNew(-3333, -4)},
 
-		// One rounding of the exact 29.989; MulRound then Add gives 29.98.
+		// One rounding of the exact 29.989 gives 29.99; MulRound, Add and a
+		// second rounding give 29.98.
 		{"MustMulAddRound/single_rounding", func() Decimal { return qty.MustMulAddRound(price, rs("0.004"), 2, ToNearestEven) }, MustNew(2999, -2)},
 		// 1.5 × 0.004 + 19.99 = 19.996: swapping e and f changes the value.
 		{"MustMulAddRound/addend_last", func() Decimal { return qty.MustMulAddRound(rs("0.004"), price, 2, ToNearestEven) }, MustNew(2000, -2)},
@@ -394,6 +395,9 @@ func TestMustRoundTwinsContractRandom(t *testing.T) {
 		a := shapedDecimal(rng, widths[i%6], randPrec())
 		b := shapedDecimal(rng, widths[(i/6)%6], randPrec())
 		c := shapedDecimal(rng, widths[(i/36)%6], randPrec())
+		// Inject zeros so the zero-divisor panics and the zero-operand successes are
+		// both common: b is DivRound's divisor, c is MulDivRound's divisor, and a is
+		// every op's first operand (DivRound's dividend).
 		if i%11 == 0 {
 			b = Decimal{}
 		}

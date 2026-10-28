@@ -8,10 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mustRoundFuzzRounding is the fixed (places, mode) set every seed meets: all
-// six modes at zero places, the money scale in the tie-breaking mode, full
-// precision truncated, and one rejected value of each argument (places 20, mode
-// 6), so every sentinel the twins can panic with replays from seeds alone.
+// mustRoundFuzzRounding is the fixed (places, mode) set the seed corpus meets,
+// one entry per seed by rotation: all six modes at zero places, the money scale
+// in the tie-breaking mode, full precision truncated, and one rejected value of
+// each argument (places 20, mode 6), so every sentinel the twins can panic with
+// replays from seeds alone.
 var mustRoundFuzzRounding = [...]struct {
 	places uint8
 	mode   RoundingMode
