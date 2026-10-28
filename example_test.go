@@ -226,8 +226,8 @@ func ExampleWeightedAvg() {
 	}
 	fmt.Println(total, volume)
 
-	// Avg truncates at DefaultPrec places like Decimal.Div; AvgRound rounds
-	// the exact quotient once, to the requested scale.
+	// Avg truncates the quotient of the two sums at DefaultPrec places like
+	// Decimal.Div; AvgRound rounds it once, to the requested scale.
 	legacy, err := vwap.Avg()
 	if err != nil {
 		panic(err)

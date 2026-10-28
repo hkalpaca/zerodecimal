@@ -45,6 +45,33 @@ var (
 		w.AddTotal(One, wavgAllocMax)
 		w.AddTotal(One, wavgAllocMax)
 	})
+	// wavgAllocQuoOverflow holds (2^128-1) over 10^-19: the numerator fits
+	// 128 bits, so Decimal.Div divides it and finds no precision that holds
+	// the quotient.
+	wavgAllocQuoOverflow = wavgAllocBuild(func(w *WeightedAvg) {
+		w.AddTotal(wavgAllocMax, Decimal{coef: u128{lo: 1}, prec: MaxPrec})
+	})
+	// wavgAllocWideQuoOverflow holds 2·(2^128-1) over 10^-19: the numerator
+	// passes 128 bits, so the wide division runs, and it finds no precision
+	// either.
+	wavgAllocWideQuoOverflow = wavgAllocBuild(func(w *WeightedAvg) {
+		w.AddTotal(wavgAllocMax, Decimal{coef: u128{lo: 1}, prec: MaxPrec})
+		w.AddTotal(wavgAllocMax, Decimal{})
+	})
+	// wavgAllocAligned holds one fill of cents × a 9-place quantity, so the
+	// next such row meets both sums at its own precision: Add and AddTotal
+	// take wavgAddNoCarry.
+	wavgAllocQty9         = RequireFromString("1.123456789")
+	wavgAllocCentsProduct = wavgAllocCents.MustMul(wavgAllocQty9)
+	wavgAllocAligned      = wavgAllocBuild(func(w *WeightedAvg) {
+		w.Add(wavgAllocCents, wavgAllocQty9)
+	})
+	// wavgAllocNearCarry holds a 9-place weight whose low limb is 2^64-1, so
+	// the next 9-place weight carries out of it and falls back to
+	// Accumulator.Add.
+	wavgAllocNearCarry = wavgAllocBuild(func(w *WeightedAvg) {
+		w.AddTotal(Decimal{}, Decimal{coef: u128{lo: maxUint64}, prec: 9})
+	})
 	// wavgAllocSquare holds one (2^128-1)^2 product, which still fits the
 	// numerator's 256 bits; a second one does not.
 	wavgAllocSquare = wavgAllocBuild(func(w *WeightedAvg) {
@@ -79,6 +106,12 @@ func TestWeightedAvgAllocs(t *testing.T) {
 		{name: "add_wide_product", fn: func() { wavgAllocAvg = wavgAllocVWAP; wavgAllocAvg.Add(wavgAllocMax, wavgAllocQty) }},
 		{name: "add_sets_sticky_overflow", fn: func() { wavgAllocAvg = wavgAllocSquare; wavgAllocAvg.Add(wavgAllocMax, wavgAllocMax) }},
 		{name: "add_total", fn: func() { wavgAllocAvg = wavgAllocVWAP; wavgAllocAvg.AddTotal(wavgAllocCents, wavgAllocQty) }},
+		{name: "add_aligned", fn: func() { wavgAllocAvg = wavgAllocAligned; wavgAllocAvg.Add(wavgAllocCents, wavgAllocQty9) }},
+		{name: "add_total_aligned", fn: func() {
+			wavgAllocAvg = wavgAllocAligned
+			wavgAllocAvg.AddTotal(wavgAllocCentsProduct, wavgAllocQty9)
+		}},
+		{name: "add_weight_carry", fn: func() { wavgAllocAvg = wavgAllocNearCarry; wavgAllocAvg.Add(wavgAllocCents, wavgAllocQty9) }},
 		{name: "reset", fn: func() { wavgAllocAvg = wavgAllocSticky; wavgAllocAvg.Reset() }},
 		{name: "total", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocVWAP.Total() }},
 		{name: "total_overflow", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocWide.Total() }},
@@ -91,6 +124,8 @@ func TestWeightedAvgAllocs(t *testing.T) {
 		{name: "avg_zero_weight", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocZeroWeight.Avg() }},
 		{name: "avg_weight_overflow", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocWeightOverflow.Avg() }},
 		{name: "avg_sticky", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocSticky.Avg() }},
+		{name: "avg_quotient_overflow", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocQuoOverflow.Avg() }},
+		{name: "avg_wide_quotient_overflow", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocWideQuoOverflow.Avg() }},
 		{name: "avground", fn: func() { wavgAllocResult, errWavgAlloc = wavgAllocVWAP.AvgRound(2, ToNearestEven) }},
 		{name: "avground_wide_numerator", fn: func() {
 			wavgAllocResult, errWavgAlloc = wavgAllocWide.AvgRound(16, ToNearestAway)
@@ -143,6 +178,39 @@ func TestWeightedAvgAllocFixtures(t *testing.T) {
 	}
 	if _, err := wavgAllocSticky.Avg(); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("sticky Avg: got %v, want ErrOverflow", err)
+	}
+	// Both quotient overflows divide a numerator that is not sticky by a
+	// valid nonzero weight; only the wide one's numerator passes 128 bits,
+	// so its ErrOverflow comes from the wide division, not Decimal.Div.
+	for _, f := range []struct {
+		name string
+		w    *WeightedAvg
+		wide bool
+	}{
+		{"avg_quotient_overflow", &wavgAllocQuoOverflow, false},
+		{"avg_wide_quotient_overflow", &wavgAllocWideQuoOverflow, true},
+	} {
+		_, totalErr := f.w.Total()
+		weight, weightErr := f.w.Weight()
+		_, avgErr := f.w.Avg()
+		switch {
+		case weightErr != nil || weight.IsZero() || f.w.num.overflow:
+			t.Fatalf("%s: weight %v, %v, sticky %v; want a nonzero weight and no sticky flag", f.name, weight, weightErr, f.w.num.overflow)
+		case errors.Is(totalErr, ErrOverflow) != f.wide:
+			t.Fatalf("%s: Total error %v; want a numerator past 128 bits: %v", f.name, totalErr, f.wide)
+		case !errors.Is(avgErr, ErrOverflow):
+			t.Fatalf("%s: Avg error %v, want ErrOverflow", f.name, avgErr)
+		}
+	}
+	// The aligned gates take wavgAddNoCarry for both sums; the carry gate
+	// declines it for the weight.
+	aligned := wavgAllocAligned
+	if !wavgAddNoCarry(&aligned.num, wavgAllocCentsProduct) || !wavgAddNoCarry(&aligned.weight, wavgAllocQty9) {
+		t.Fatal("add_aligned and add_total_aligned must take the no-carry add")
+	}
+	nearCarry := wavgAllocNearCarry
+	if wavgAddNoCarry(&nearCarry.weight, wavgAllocQty9) || nearCarry.weight.prec != wavgAllocQty9.prec {
+		t.Fatal("add_weight_carry must be aligned and carry out of the weight's low limb")
 	}
 	w := wavgAllocSquare
 	if w.num.overflow {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math/big"
 	"math/rand/v2"
+	"os/exec"
+	"strconv"
 	"testing"
 
 	"github.com/quagmt/udecimal"
@@ -505,6 +507,47 @@ func TestWeightedAvgEdgeCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestWeightedAvgAddTruncatesProducts pins what Add's doc comment says it
+// loses: value×weight is truncated at DefaultPrec places, as Mul truncates
+// it, before it reaches the exact numerator, while AddTotal keeps an exact
+// product as given. Under zerodecimal_prec9, 0.5 × 0.000000001 needs 10
+// places, so Add's mean of 0.5 rounds to 0, while the wider builds keep it.
+// 0.5 × 10^-DefaultPrec is truncated under every tag, but MulExact holds it
+// only below DefaultPrec 19.
+func TestWeightedAvgAddTruncatesProducts(t *testing.T) {
+	t.Parallel()
+	half := RequireFromString("0.5")
+	for _, weight := range []Decimal{
+		RequireFromString("0.000000001"),
+		{coef: u128{lo: 1}, prec: DefaultPrec},
+	} {
+		product, err := half.MulExact(weight)
+		if err != nil {
+			require.Equal(t, ErrUnderflow, err, "only 0.5 × 10^-19 has no exact Decimal")
+			require.Equal(t, MaxPrec, DefaultPrec)
+			continue
+		}
+		var byAdd, byTotal WeightedAvg
+		byAdd.Add(half, weight)
+		byTotal.AddTotal(product, weight)
+		exact, err := byTotal.AvgRound(2, ToNearestAway)
+		require.NoError(t, err)
+		require.Equal(t, MustNew(50, -2), exact, "AddTotal keeps the exact product: the mean is 0.5")
+
+		total, err := byAdd.Total()
+		require.NoError(t, err)
+		got, err := byAdd.AvgRound(2, ToNearestAway)
+		require.NoError(t, err)
+		if half.Prec()+weight.Prec() > DefaultPrec {
+			require.Equal(t, Decimal{}, total, "Mul truncates the product to zero: weight=%v", weight)
+			require.Equal(t, Decimal{}, got, "weight=%v", weight)
+			continue
+		}
+		require.Equal(t, product, total, "weight=%v", weight)
+		require.Equal(t, exact, got, "weight=%v", weight)
 	}
 }
 
@@ -1041,4 +1084,96 @@ func TestWeightedAvgOrderIndependence(t *testing.T) {
 			requireWavgResult(t, "Weight", wantWeight, wantWeightErr, got, err, rows)
 		})
 	}
+}
+
+// TestWeightedAvgMatchesAccumulatorState streams rows through a WeightedAvg
+// and through two Accumulators fed the same terms (AddMul or Add for the
+// numerator, Add for the weight), and requires identical internal state
+// after every row, so wavgAddNoCarry is exactly the case of Accumulator.add
+// it inlines. The fixed rows hit each side of it: aligned one-limb terms
+// with and without a carry out of the low limb, coarser and finer terms,
+// two-limb terms, zero terms, both signs, and a sticky numerator. Random
+// and money-shaped streams follow, and every side must occur often.
+func TestWeightedAvgMatchesAccumulatorState(t *testing.T) {
+	t.Parallel()
+	low := Decimal{coef: u128{lo: maxUint64}} // a full low limb at precision 0
+	cents, qty := RequireFromString("19.99"), RequireFromString("1.5")
+	fixed := []wavgRow{
+		{total: true, value: low, weight: low},             // aligned, no carry
+		{total: true, value: low, weight: low},             // aligned, carry out of the low limb
+		{total: true, value: Decimal{}, weight: low.Neg()}, // zero term at precision 0; negative total
+		{value: cents, weight: qty},                        // finer: raises both precisions
+		{value: cents, weight: qty},                        // aligned again
+		{total: true, value: low, weight: low},             // coarser
+		{total: true, value: Decimal{coef: u128{hi: 1, lo: 5}, prec: 3}, weight: Decimal{coef: u128{hi: 1}, prec: 1}}, // two limbs
+		{total: true, weight: qty}, // zero total at precision 3
+		{value: wavgMax, weight: wavgMax},
+		{value: wavgMax, weight: wavgMax}, // the numerator turns sticky
+		{total: true, value: MustNew(-7, -3), weight: MustNew(-5, -1)},
+	}
+	var hits, carries, others int
+	check := func(rows []wavgRow) {
+		var w WeightedAvg
+		var num, weight Accumulator
+		for i, r := range rows {
+			probe := w.weight
+			switch {
+			case wavgAddNoCarry(&probe, r.weight):
+				hits++
+			case r.weight.prec == w.weight.prec && r.weight.coef.hi == 0:
+				carries++
+			default:
+				others++
+			}
+			r.apply(&w)
+			if r.total {
+				num.Add(r.value)
+			} else {
+				num.AddMul(r.value, r.weight)
+			}
+			weight.Add(r.weight)
+			require.Equalf(t, num, w.num, "numerator after row %d: rows=%+v", i, rows)
+			require.Equalf(t, weight, w.weight, "weight after row %d: rows=%+v", i, rows)
+		}
+	}
+	check(fixed)
+	require.True(t, wavgRun(fixed).num.overflow, "the fixed rows end with a sticky numerator")
+	rng := rand.New(rand.NewPCG(0x5747_e04, 0xfa57))
+	for iter := range 1_200 {
+		check(wavgRandStream(rng, iter))
+		// Money rows at fixed precisions: every row after the first is aligned.
+		rows := make([]wavgRow, 1+rng.IntN(24))
+		for i := range rows {
+			price := newDecimal(u128{lo: 1 + rng.Uint64N(50_000*100)}, false, 2)
+			q := newDecimal(u128{lo: 1 + rng.Uint64N(10_000*pow10u64[9])}, rng.IntN(4) == 0, 9)
+			rows[i] = wavgRow{total: i%3 == 0, value: price, weight: q}
+		}
+		check(rows)
+		// Full low limbs at one precision: most same-sign adds carry.
+		full := make([]wavgRow, 2+rng.IntN(8))
+		for i := range full {
+			value := newDecimal(u128{lo: 1<<63 | rng.Uint64()}, rng.IntN(2) == 0, 7)
+			weight := newDecimal(u128{lo: 1<<63 | rng.Uint64()}, rng.IntN(2) == 0, 7)
+			full[i] = wavgRow{total: true, value: value, weight: weight}
+		}
+		check(full)
+	}
+	require.Greater(t, hits, 10_000, "aligned no-carry adds")
+	require.Greater(t, carries, 100, "aligned adds that carry")
+	require.Greater(t, others, 2_000, "adds Accumulator.Add must take")
+}
+
+// TestWeightedAvgInlineBudgets pins what Add and AddTotal rely on for speed:
+// wavgAddNoCarry fits the default inline budget, so an aligned no-carry row
+// costs no call for the weight (nor, in AddTotal, for the numerator).
+func TestWeightedAvgInlineBudgets(t *testing.T) {
+	if strconv.IntSize != 64 {
+		t.Skip("inline budgets are calibrated for 64-bit compiler targets")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not on PATH; cannot query inlining diagnostics")
+	}
+	entry, ok := buildInlineReport(t)["wavgAddNoCarry"]
+	require.True(t, ok, "wavgAddNoCarry missing from the inlining report")
+	require.Truef(t, entry.canInline, "wavgAddNoCarry must fit the default inline budget: cost %d", entry.cost)
 }

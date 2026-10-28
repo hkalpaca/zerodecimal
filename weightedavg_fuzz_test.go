@@ -85,9 +85,9 @@ func TestWeightedAvgFuzzCodecRoundTrip(t *testing.T) {
 // FuzzWeightedAvg streams a byte-driven sequence of Add and AddTotal rows,
 // then holds Total, Weight, Avg and AvgRound to the exact big.Int/big.Rat
 // oracle (and to Total followed by Div and DivRound by Weight wherever both
-// sums fit), pins Avg and AvgRound to two raw Accumulators fed the same
-// terms, and requires the reversed stream to give identical results. It must
-// never panic.
+// sums fit), pins the internal state and Avg and AvgRound to two raw
+// Accumulators fed the same terms, and requires the reversed stream to give
+// identical results. It must never panic.
 func FuzzWeightedAvg(f *testing.F) {
 	d := RequireFromString
 	ulp := Decimal{coef: u128{lo: 1}, prec: MaxPrec}
@@ -135,6 +135,8 @@ func FuzzWeightedAvg(f *testing.F) {
 			}
 			weight.Add(r.weight)
 		}
+		require.Equal(t, num, w.num, "numerator state")
+		require.Equal(t, weight, w.weight, "weight state")
 		if den, err := weight.Sum(); err == nil {
 			want, wantErr := num.Div(den)
 			got, gotErr := w.Avg()

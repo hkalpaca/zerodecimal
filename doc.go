@@ -52,8 +52,9 @@
 // ErrOverflow, so a running total need not fit 128 bits until it is read.
 //
 // WeightedAvg streams a weighted mean Σ(value·weight) / Σweight over two
-// Accumulators: Avg truncates like Div, and AvgRound rounds the exact
-// quotient once.
+// exact Accumulator sums, whose numerator terms Add truncates at DefaultPrec
+// places like Mul (AddTotal takes them as given): Avg truncates the quotient
+// of the sums like Div, and AvgRound rounds it once.
 //
 // # Parsing and codecs
 //

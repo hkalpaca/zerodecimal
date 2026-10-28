@@ -117,7 +117,7 @@ explicit, use:
 | Intent | Multiplication/division | Mean |
 | --- | --- | --- |
 | Require an exact `Decimal` representation | `MulExact`, `DivExact` | `AvgExact` |
-| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`) | `AvgRound` (unweighted, as are `Avg` and `AvgExact`); `WeightedAvg.AvgRound` (streamed Σ value·weight / Σ weight; `WeightedAvg.Avg` truncates like `Div`) |
+| Round once to a requested scale | `MulRound`, `DivRound`, `MulAddRound` (`d*e + f`) | `AvgRound` (unweighted, as are `Avg` and `AvgExact`); `WeightedAvg.AvgRound` (Σ value·weight / Σ weight over two exact streamed sums, rounded once; `WeightedAvg.Add` truncates each product like `Mul`, and `WeightedAvg.Avg` the quotient like `Div`) |
 
 Exact operations return `ErrInexact` when nonzero digits would be discarded,
 `ErrUnderflow` for a nonzero result below `10^-MaxPrec`, and `ErrOverflow` for
