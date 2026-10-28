@@ -25,3 +25,5 @@ benchmarks/*.pgo
 
 # PGO scratch output (filtered source populations and comparison stay tracked)
 benchmarks/zd.pprof
+
+plans
