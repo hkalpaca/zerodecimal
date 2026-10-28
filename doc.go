@@ -54,6 +54,10 @@
 // earlier truncation discarded. Its only error is ErrInvalidRoundingMode, and
 // MustRoundTo is its panicking twin.
 //
+// Allocate and Split divide a total into shares at a caller-selected scale
+// that sum exactly to the total, by the largest-remainder method; rounding
+// each share separately can lose or add units.
+//
 // Sum and all average variants use a wide signed accumulator, making
 // cancellation independent of operand order. Sum checks its final coefficient
 // at the greatest input precision and preserves that precision for a nonzero
@@ -108,6 +112,10 @@
 // owned result. Uncached multi-byte String results normally allocate once; an
 // uncached representative multi-byte SQL Value is gated at exactly two
 // allocations.
+//
+// Allocate and Split write their shares into a caller's dst and allocate only
+// to grow it, except that Allocate ranks more than 64 weights in one scratch
+// buffer.
 //
 // The eager small-value string and driver.Value cache is absent by default.
 // The zerodecimal_strcache build tag enables it; cache hits allocate nothing
